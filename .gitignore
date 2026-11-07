@@ -1,0 +1,26 @@
+# 运行时产生的数据，绝不入库（含真实线索与账号信息）
+data/
+**/data/
+*.jsonl
+seen_notes.json
+authors.json
+runs.jsonl
+guard.json
+leads.*
+
+# 登录态
+cookies.txt
+**/cookies*
+*profile*/
+
+# 环境与依赖
+.venv/
+**/.venv/
+node_modules/
+__pycache__/
+*.pyc
+
+# 杂项
+*.log
+*.zip
+.DS_Store

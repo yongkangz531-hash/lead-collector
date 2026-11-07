@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>线索采集台</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#04060c;--panel:#0a1220;--line:rgba(90,160,255,.16);--line2:rgba(90,160,255,.38);
+  --cyan:#22d3ee;--green:#22c55e;--amber:#f59e0b;--red:#f43f5e;--ink:#e8f2ff;--dim:#8ea3bf;--dim2:#5d6f8a}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:"Microsoft YaHei","Segoe UI",sans-serif;font-size:12px;
+  background-image:radial-gradient(700px 400px at 100% 0,rgba(34,211,238,.10),transparent 60%)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:rgba(90,160,255,.24);border-radius:8px}
+.wrap{display:flex;flex-direction:column;height:100vh;min-height:0}
+.tbar{height:34px;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(12,20,34,.95),rgba(6,10,18,.9));flex:0 0 auto}
+.logo{width:16px;height:16px;border-radius:4px;display:grid;place-items:center;font-size:9px;font-weight:800;color:#04121a;
+  background:linear-gradient(135deg,var(--cyan),#7c5cff)}
+.bname{font-weight:700;letter-spacing:.08em;font-size:12px}
+.sp{margin-left:auto;display:flex;gap:10px;color:var(--dim);font-family:Consolas,monospace;font-size:11px;align-items:center}
+.led{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+.led.run{background:var(--amber);animation:pulse 1.2s infinite}
+.led.err{background:var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+.body{flex:1;display:flex;flex-direction:column;gap:6px;padding:8px;min-height:0}
+.row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.row .lab{color:var(--dim2);font-size:11px;white-space:nowrap}
+input,select,textarea{background:rgba(3,7,13,.92);border:1px solid var(--line);color:var(--ink);border-radius:5px;
+  padding:5px 8px;font-size:11.5px;font-family:inherit;outline:0}
+input:focus,select:focus,textarea:focus{border-color:rgba(34,211,238,.6)}
+input[type=checkbox]{width:auto;accent-color:#22d3ee}
+button{background:linear-gradient(135deg,#22d3ee,#0ea5e9);color:#03121a;border:0;border-radius:5px;padding:5px 11px;
+  font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}
+button:disabled{opacity:.4;cursor:default}
+button.g{background:rgba(10,18,30,.9);color:var(--dim);border:1px solid var(--line);font-weight:600}
+button.g:hover{color:var(--ink);border-color:var(--line2)}
+button.d{background:rgba(244,63,94,.12);color:#fca5a5;border:1px solid rgba(244,63,94,.4)}
+.tbl{border:1px solid var(--line);border-radius:8px;background:rgba(6,11,19,.7);overflow:auto;min-height:70px;flex:1}
+table{width:100%;border-collapse:collapse;font-size:11.5px;table-layout:fixed}
+th{position:sticky;top:0;background:#0b1524;color:var(--dim2);font-size:10px;font-weight:600;letter-spacing:.05em;
+  text-align:left;padding:6px 5px;border-bottom:1px solid var(--line);white-space:nowrap;z-index:2}
+td{padding:5px 5px;border-bottom:1px solid rgba(90,160,255,.07);color:#cfe2f7;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;max-width:150px}
+tbody tr:hover td{background:rgba(34,211,238,.05)}
+.t{color:var(--dim2);font-family:Consolas,monospace;font-size:10.5px}
+.tag{font-size:10px;border:1px solid;border-radius:3px;padding:1px 5px}
+.hi{color:#6ee7b7;border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.1)}
+.mid{color:#fcd34d;border-color:rgba(245,158,11,.45);background:rgba(245,158,11,.1)}
+.lo{color:var(--dim2);border-color:rgba(120,140,165,.35);background:rgba(120,140,165,.08)}
+.ok{color:var(--cyan);border-color:rgba(34,211,238,.45);background:rgba(34,211,238,.08)}
+.warn{color:#fca5a5;border-color:rgba(244,63,94,.4);background:rgba(244,63,94,.08)}
+.mini{padding:2px 7px;font-size:10.5px;border-radius:4px}
+.empty{color:var(--dim2);text-align:center;padding:18px 0;font-size:11.5px}
+.err{color:var(--red);font-size:11px}
+.log{font-family:Consolas,monospace;font-size:10.5px;color:var(--dim);line-height:1.65;overflow:auto;
+  white-space:pre-wrap;word-break:break-all;background:rgba(6,11,19,.7);border:1px solid var(--line);
+  border-radius:8px;padding:6px 8px;max-height:110px}
+.note{color:var(--dim2);font-size:10.5px}
+.hintline{color:var(--dim2);font-size:10.5px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="tbar">
+    <div class="logo">线</div><span class="bname">线索采集台</span>
+    <span class="t" id="acc" style="margin-left:8px"></span>
+    <div class="sp">
+      <span id="stat">待命</span><span id="hour" class="t"></span><span id="clk" class="t">--:--</span>
+      <span class="led" id="led"></span>
+    </div>
+  </div>
+
+  <div class="body">
+    <!-- 作品地址条 -->
+    <div class="row">
+      <span class="lab">作品地址</span>
+      <input id="url" placeholder="https://www.xiaohongshu.com/explore/..." style="flex:1;min-width:180px">
+      <button class="g" id="openurl">进入作品</button>
+      <button id="cmtnote">评论采集</button>
+      <button class="g" id="exportn">导出作品</button>
+      <button class="g" id="exportc">导出用户</button>
+      <button class="d" id="clearall">清空列表</button>
+    </div>
+
+    <!-- 作品信息表 -->
+    <div class="tbl" style="flex:0 0 auto;max-height:170px">
+      <table>
+        <thead><tr>
+          <th style="width:34px"><input type="checkbox" id="ckn"></th>
+          <th style="width:40px">序号</th><th style="width:70px">发布时间</th><th>文章标题</th>
+          <th style="width:104px">作品链接</th><th style="width:56px">点赞</th><th style="width:56px">评论</th>
+          <th style="width:86px">标签</th><th style="width:46px">状态</th>
+        </tr></thead>
+        <tbody id="tn"></tbody>
+      </table>
+    </div>
+
+    <!-- 采集参数 -->
+    <div class="row" style="gap:6px 8px">
+      <span class="lab">关键词</span>
+      <input id="kw" value="装修" style="width:110px">
+      <span class="lab">篇数</span>
+      <select id="notes"><option>3</option><option selected>6</option><option>10</option><option>15</option></select>
+      <button id="start">开始采集</button>
+      <button class="g" id="skipcool" style="border-color:rgba(245,158,11,.5);color:#fcd34d">跳过冷却</button>
+      <button class="g" id="pause">暂停</button>
+      <button class="d" id="stop">停止</button>
+      <span style="width:10px"></span>
+      <span class="lab">监控</span>
+      <input id="monmin" type="number" min="15" max="1440" style="width:64px"> <span class="lab">分钟</span>
+      <span style="display:inline-flex;gap:6px">
+        <button class="g" id="monon">开始监控</button>
+        <button class="g" id="monoff">停监控</button>
+      </span>
+    </div>
+    <div class="row" style="gap:6px 8px">
+      <span class="lab">只采 点赞≥</span><input id="minlike" type="number" min="0" style="width:56px">
+      <span class="lab">评论≥</span><input id="mincmt" type="number" min="0" style="width:56px">
+      <span class="lab">包含词</span><input id="inc" placeholder="逗号分隔" style="width:130px">
+      <span class="lab">屏蔽词</span><input id="exc" placeholder="同行/广告" style="width:110px">
+      <span class="lab">地区</span><input id="city" placeholder="如 重庆" style="width:70px">
+      <label class="lab"><input type="checkbox" id="onlyuid" checked style="margin-right:4px">只采 uid 不重复</label>
+      <button class="g" id="saveset">保存参数</button>
+      <span class="err" id="err"></span>
+    </div>
+
+    <!-- 用户信息表 -->
+    <div class="tbl">
+      <table>
+        <thead><tr>
+          <th style="width:34px"><input type="checkbox" id="cku"></th>
+          <th style="width:38px">序号</th><th style="width:96px">昵称</th><th style="width:86px">uid</th><th style="width:50px">IP</th><th style="width:56px">时间</th>
+          <th>评论内容</th><th style="width:40px">意向</th><th style="width:62px">状态</th>
+          <th style="width:50px">关注</th><th style="width:50px">评论</th>
+        </tr></thead>
+        <tbody id="tu"></tbody>
+      </table>
+    </div>
+
+    <!-- 底部动作 -->
+    <div class="row" style="gap:6px 8px">
+      <button class="g" id="editrep">设置评论内容</button>
+      <span class="lab">评论间隔</span><input id="cgap" type="number" min="15" max="600" style="width:56px"><span class="lab">秒</span>
+      <button id="cmtall">开始评论</button>
+      <span style="width:8px"></span>
+      <span class="lab">关注间隔</span><input id="fgap" type="number" min="3" max="120" style="width:56px"><span class="lab">秒</span>
+      <button id="folall">开始关注</button>
+      <label class="lab"><input type="checkbox" id="rtf" style="margin-right:4px">实时关注</label>
+      <span class="t" id="cnt"></span>
+    </div>
+
+    <div id="repanel" style="display:none">
+      <div class="row" style="margin-bottom:4px"><span class="lab">评论词库（一行一条）</span>
+        <button class="mini" id="saverep">保存</button><span class="t" id="rcount"></span></div>
+      <textarea id="replies" rows="4" style="width:100%"></textarea>
+    </div>
+
+    <div class="log" id="log">等待开始…</div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let S = {}, conf = {}, notes = [], leads = [], followed = new Set(), commented = new Set();
+const uidOf = u => { const m = String(u||"").match(/\/user\/profile\/([0-9a-f]{8,})/); return m?m[1]:""; };
+
+async function jget(u){ const r = await fetch(u); return r.json(); }
+async function jpost(u, b){ const r = await fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})}); return r.json(); }
+
+function paintStatus(){
+  $("#stat").textContent = S.error ? "出错" : S.step==="完成" ? "完成 "+S.elapsed+"s" : S.running ? (S.paused?"已暂停 ":"采集中 ")+S.elapsed+"s" : "待命";
+  $("#led").className = "led" + (S.error?" err":(S.running?" run":""));
+  $("#hour").textContent = "本小时 " + ((S.guard||{}).hour_count||0) + " 篇";
+  $("#err").textContent = S.error || "";
+  $("#start").disabled = S.running && !S.paused;
+  $("#pause").disabled = !S.running;
+  $("#pause").textContent = S.paused ? "继续" : "暂停";
+  $("#stop").disabled = !S.running;
+  $("#log").textContent = (S.log||[]).join("\n") || "等待开始…";
+  $("#log").scrollTop = $("#log").scrollHeight;
+  const nm = S.notes_seen||0, tl = S.total_leads||0;
+  $("#cnt").textContent = "已采笔记 "+nm+" 篇 · 线索 "+tl+" 条";
+}
+
+function paintNotes(){
+  $("#tn").innerHTML = notes.length ? notes.map((n,i)=>`<tr>
+    <td><input type="checkbox" class="ckn" data-url="${esc(n.url||"")}"></td>
+    <td class="t">${i+1}</td><td class="t">${esc(n.date||"—")}</td>
+    <td title="${esc(n.title)}">${esc(n.title||"")}</td>
+    <td class="t" title="${esc(n.url)}">${esc((n.url||"").replace(/^https?:\/\//,"").slice(0,26))}</td>
+    <td class="t">${esc(n.likes||"—")}</td><td class="t">${esc(n.comments||"0")}</td>
+    <td class="t">${esc((n.tags||"").slice(0,14)||"—")}</td>
+    <td><span class="tag ok">已采</span></td></tr>`).join("")
+    : '<tr><td colspan="9" class="empty">还没有作品，先在下面填关键词开始采集，或粘贴作品地址点「评论采集」</td></tr>';
+}
+
+function paintUsers(){
+  const list = leads;
+  $("#tu").innerHTML = list.length ? list.slice(0,600).map((r,i)=>{
+    const uid = uidOf(r.user_url), f = followed.has(uid), c = commented.has(r.key);
+    return `<tr>
+    <td><input type="checkbox" class="cku" data-k="${r.key}" data-uid="${uid}" data-name="${esc(r.name)}"></td>
+    <td class="t">${i+1}</td>
+    <td title="${esc(r.name)}">${esc(r.name)}</td>
+    <td class="t" title="${uid}">${esc(uid?uid.slice(0,10):"—")}</td>
+    <td class="t">${esc(r.ip||"—")}</td>
+    <td class="t">${esc(r.ctime||"—")}</td>
+    <td title="${esc(r.text)}">${esc(r.text)}</td>
+    <td><span class="tag ${r.intent==="高"?"hi":r.intent==="中"?"mid":"lo"}">${r.intent}</span></td>
+    <td>${f?'<span class="tag ok">已关注</span>':''}${c?'<span class="tag warn" style="margin-left:3px">已评论</span>':''}${(!f&&!c)?'<span class="t">新</span>':''}</td>
+    <td>${(!f&&r.user_url)?'<button class="mini g f1" data-k="'+r.key+'">关注</button>':'<span class="t">—</span>'}</td>
+    <td>${(!c&&r.note_url)?'<button class="mini g c1" data-k="'+r.key+'">评论</button>':'<span class="t">—</span>'}</td>
+    </tr>`;}).join("")
+    : '<tr><td colspan="12" class="empty">还没有用户，采集完就有了</td></tr>';
+}
+
+async function refresh(){
+  S = await jget("/api/status");
+  paintStatus();
+  if(!S.running && S.step==="完成"){ loadAll(); }
+}
+async function loadAll(){
+  const [n, l] = await Promise.all([jget("/api/notes?limit=300"), jget("/api/leads?limit=800")]);
+  notes = n.rows||[]; leads = l.rows||[];
+  followed = new Set(l.followed||[]); commented = new Set(l.commented||[]);
+  paintNotes(); paintUsers();
+}
+async function loadConf(){
+  conf = await jget("/api/config");
+  const c = conf.collect||{};
+  $("#monmin").value = c.monitor_min || 30;
+  $("#minlike").value = c.min_likes || 0;
+  $("#mincmt").value = c.min_comments || 0;
+  $("#inc").value = (c.include||[]).join(",");
+  $("#exc").value = (c.exclude||[]).join(",");
+  $("#city").value = c.city || "";
+  $("#onlyuid").checked = c.only_uid !== false;
+  $("#cgap").value = c.comment_gap || 45;
+  $("#fgap").value = c.follow_gap || 6;
+  $("#rtf").checked = !!c.realtime_follow;
+  $("#replies").value = (conf.replies||[]).map((x,i)=>(i+1)+". "+x).join(String.fromCharCode(10));
+  $("#rcount").textContent = "当前 "+(conf.replies||[]).length+" 条";
+  const a = await jget("/api/account");
+  const acc = a.account||{};
+  $("#acc").textContent = acc.nickname ? ("账号 "+acc.nickname+" · 已关注 "+(a.followed||0)+" 人") : "未绑定账号";
+}
+
+// ---------- 交互 ----------
+$("#start").onclick = async ()=>{
+  const kw = $("#kw").value.trim(); if(!kw) return alert("填个关键词");
+  const d = await jpost("/api/collect",{kw, notes:+$("#notes").value, force:true});
+  if(d.error) $("#err").textContent = d.error; else { $("#err").textContent=""; }
+  loadConf();
+};
+$("#skipcool").onclick = async () => {
+  const kw = $("#kw").value.trim();
+  if (!kw) return alert("先填关键词");
+  const msg = "跳过冷却，立刻再跑一轮？" + String.fromCharCode(10) +
+    "冷却存在的意义是降低被平台判定为自动化的概率，连跑容易弹验证。" + String.fromCharCode(10) +
+    "这次按你的判断来，风险自负。";
+  if (!confirm(msg)) return;
+  const d = await jpost("/api/collect", { kw: kw, notes: +$("#notes").value, force: true, skip_cool: true });
+  if (d.error) return alert(d.error);
+  refresh();
+};
+$("#pause").onclick = async ()=>{ await jpost("/api/control",{action:S.paused?"resume":"pause"}); refresh(); };
+$("#stop").onclick = async ()=>{ if(!confirm("停止这一轮？已采的会保留")) return; await jpost("/api/control",{action:"stop"}); refresh(); };
+$("#openurl").onclick = async ()=>{
+  const url = $("#url").value.trim(); if(!url) return alert("先粘贴作品地址");
+  const d = await jpost("/api/open",{url}); if(d.error) alert(d.error);
+};
+$("#cmtnote").onclick = async ()=>{
+  const url = $("#url").value.trim(); if(!url) return alert("先粘贴作品地址");
+  const d = await jpost("/api/collect_note",{url}); if(d.error) alert(d.error); refresh();
+};
+$("#exportn").onclick = ()=> location.href = "/api/export?type=notes";
+$("#exportc").onclick = ()=> location.href = "/api/export?type=comments";
+$("#clearall").onclick = async () => {
+  const msg = "清空采集列表？" + String.fromCharCode(10) +
+    "作品表、用户表、已采过的笔记记录都会清掉，同一批可以重新采。" + String.fromCharCode(10) +
+    "关注记录和评论记录保留。";
+  if (!confirm(msg)) return;
+  const d = await jpost("/api/clear", {});
+  if (d.error) return alert(d.error);
+  notes = []; leads = []; paintNotes(); paintUsers();
+  alert("已清空 " + d.removed + " 条线索");
+};
+$("#ckn").onclick = e => document.querySelectorAll("#tn .ckn").forEach(c=>c.checked=e.target.checked);
+$("#cku").onclick = e => document.querySelectorAll("#tu .cku").forEach(c=>c.checked=e.target.checked);
+
+$("#monon").onclick = async ()=>{
+  const m = Math.max(15, +$("#monmin").value||30);
+  await jpost("/api/config",{jobs:[{kw:$("#kw").value.trim()||"装修",notes:+$("#notes").value,every_min:m,enabled:true,last_run:0}]});
+  alert("已开始监控：每 "+m+" 分钟跑一次「"+($("#kw").value.trim()||"装修")+"」");
+  loadConf();
+};
+$("#monoff").onclick = async ()=>{
+  await jpost("/api/config",{jobs:[]}); alert("已停监控"); loadConf();
+};
+$("#saveset").onclick = async ()=>{
+  const collect = {
+    min_likes:+$("#minlike").value||0, min_comments:+$("#mincmt").value||0,
+    include:$("#inc").value.split(/[,，]/).map(s=>s.trim()).filter(Boolean),
+    exclude:$("#exc").value.split(/[,，]/).map(s=>s.trim()).filter(Boolean),
+    city:$("#city").value.trim(), only_uid:$("#onlyuid").checked,
+    monitor_min:+$("#monmin").value||30, comment_gap:+$("#cgap").value||45,
+    follow_gap:+$("#fgap").value||6, realtime_follow:$("#rtf").checked
+  };
+  await jpost("/api/config",{collect});
+  $("#err").textContent = "参数已保存";
+  setTimeout(()=>{ if($("#err").textContent==="参数已保存") $("#err").textContent=""; },1500);
+};
+$("#editrep").onclick = ()=>{ const p=$("#repanel"); p.style.display = p.style.display==="none" ? "block":"none"; };
+$("#saverep").onclick = async ()=>{
+  const lines = $("#replies").value.split(String.fromCharCode(10)).map(x=>x.replace(/^\s*\d+[.、)]\s*/,"").trim()).filter(Boolean);
+  await jpost("/api/config",{replies:lines}); loadConf(); alert("词库已保存 "+lines.length+" 条");
+};
+$("#cmtall").onclick = async ()=>{
+  const keys = [...document.querySelectorAll("#tu .cku:checked")].map(c=>c.dataset.k);
+  const body = keys.length ? {keys} : {high_intent:true};
+  if(!keys.length && !confirm("没勾选，就给全部高意向客户各回一条？")) return;
+  const d = await jpost("/api/comment", body);
+  if(d.error) return alert(d.error);
+  alert("开始评论 "+d.count+" 条（词库随机，30-60 秒一条）");
+  pollComment();
+};
+$("#folall").onclick = async ()=>{
+  const keys = [...document.querySelectorAll("#tu .cku:checked")].filter(c=>c.dataset.uid).map(c=>c.dataset.k);
+  if(!keys.length) return alert("先勾选要关注的人");
+  const d = await jpost("/api/follow",{keys});
+  if(d.error) return alert(d.error);
+  alert("开始关注 "+d.count+" 人");
+  pollFollow();
+};
+document.addEventListener("click", async e=>{
+  const f = e.target.closest(".f1");
+  if(f){ f.disabled=true; f.textContent="…"; const d=await jpost("/api/follow",{keys:[f.dataset.k]});
+    if(d.error){ f.textContent="失败"; f.title=d.error; setTimeout(()=>{f.textContent="关注";f.disabled=false;},1500);} else pollFollow(); return; }
+  const c = e.target.closest(".c1");
+  if(c){ c.disabled=true; c.textContent="…"; const d=await jpost("/api/comment",{keys:[c.dataset.k]});
+    if(d.error){ c.textContent="失败"; c.title=d.error; setTimeout(()=>{c.textContent="评论";c.disabled=false;},1500);} else pollComment(); return; }
+});
+async function pollFollow(){
+  const d = await jget("/api/follow/status");
+  if(d.log && d.log.length) $("#log").textContent = d.log.join("\n");
+  if(d.running) setTimeout(pollFollow,1500); else loadAll();
+}
+async function pollComment(){
+  const d = await jget("/api/comment/status");
+  if(d.log && d.log.length) $("#log").textContent = d.log.join("\n");
+  if(d.running) setTimeout(pollComment,1800); else loadAll();
+}
+
+setInterval(()=>{ $("#clk").textContent = new Date().toLocaleTimeString("zh-CN",{hour12:false}); }, 1000);
+setInterval(refresh, 1500);
+loadConf().then(loadAll);
+</script>
+</body>
+</html>

@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>线索采集台</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#04060c;--line:rgba(90,160,255,.15);--line2:rgba(90,160,255,.34);
+  --cyan:#22d3ee;--violet:#7c5cff;--green:#22c55e;--amber:#f59e0b;--red:#f43f5e;
+  --ink:#e8f2ff;--dim:#8ea3bf;--dim2:#5d6f8a}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:#04060c;color:var(--ink);font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+  background-image:radial-gradient(900px 520px at 8% -12%,rgba(34,211,238,.16),transparent 62%),
+    radial-gradient(820px 620px at 96% 2%,rgba(124,92,255,.17),transparent 64%),
+    linear-gradient(rgba(90,160,255,.05) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(90,160,255,.05) 1px,transparent 1px);
+  background-size:auto,auto,40px 40px,40px 40px;-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:rgba(90,160,255,.24);border-radius:8px}
+::-webkit-scrollbar-track{background:transparent}
+.tbar{height:38px;display:flex;align-items:center;gap:12px;padding:0 15px;
+  background:linear-gradient(180deg,rgba(12,20,34,.96),rgba(6,10,18,.9));border-bottom:1px solid var(--line)}
+.logo{width:19px;height:19px;border-radius:5px;display:grid;place-items:center;font-size:10px;font-weight:800;
+  color:#04121a;background:linear-gradient(135deg,var(--cyan),var(--violet));box-shadow:0 0 14px rgba(34,211,238,.55)}
+.bname{font-size:12.5px;font-weight:700;letter-spacing:.1em}
+.tstat{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:10.5px;color:var(--dim);
+  font-family:Consolas,monospace;letter-spacing:.08em}
+.led{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+.led.run{background:var(--amber);box-shadow:0 0 8px var(--amber);animation:pulse 1.2s infinite}
+.led.err{background:var(--red);box-shadow:0 0 8px var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.app{display:grid;grid-template-columns:186px 1fr;height:calc(100vh - 38px);min-height:0}
+.side{padding:12px 10px;border-right:1px solid var(--line);background:linear-gradient(180deg,rgba(10,16,28,.85),rgba(5,9,16,.92))}
+.nav a{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:8px;font-size:12.5px;color:var(--dim);
+  cursor:pointer;border:1px solid transparent;margin-bottom:2px}
+.nav a.on{background:linear-gradient(90deg,rgba(34,211,238,.16),rgba(124,92,255,.06));color:#fff;border-color:var(--line2)}
+.nav a .i{width:14px;text-align:center;color:var(--dim2);font-size:12px}
+.nav a.on .i{color:var(--cyan)}
+.sidefoot{margin-top:16px;font-size:10px;color:var(--dim2);line-height:1.8;padding:0 4px}
+.main{padding:16px;overflow:auto;min-width:0}
+.view{display:none}.view.on{display:block}
+.panel{background:linear-gradient(170deg,rgba(14,21,36,.92),rgba(6,11,19,.9));border:1px solid var(--line);
+  border-radius:13px;padding:15px 16px;position:relative}
+.panel:before{content:"";position:absolute;top:0;left:14px;right:14px;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(34,211,238,.5),transparent)}
+.lbl{font-size:10px;letter-spacing:.14em;color:var(--dim2);margin-bottom:6px}
+input,select,textarea{background:rgba(3,7,13,.9);border:1px solid var(--line);color:var(--ink);
+  border-radius:8px;padding:9px 11px;font-size:12.5px;outline:0;font-family:inherit;width:100%}
+input:focus,select:focus,textarea:focus{border-color:rgba(34,211,238,.6);box-shadow:0 0 0 3px rgba(34,211,238,.1)}
+button{background:linear-gradient(135deg,var(--cyan),#0ea5e9);color:#03121a;border:0;border-radius:8px;
+  padding:10px 16px;font-size:12.5px;font-weight:800;letter-spacing:.05em;cursor:pointer;font-family:inherit;
+  box-shadow:0 0 18px rgba(34,211,238,.28)}
+button:disabled{opacity:.35;cursor:default;box-shadow:none}
+button.ghost{background:rgba(8,14,24,.85);color:var(--dim);border:1px solid var(--line);box-shadow:none;font-weight:600}
+button.ghost:hover{color:var(--ink);border-color:var(--line2)}
+button.mini{padding:5px 10px;font-size:11px;box-shadow:none;white-space:nowrap}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+.kpi{background:rgba(8,14,24,.62);border:1px solid var(--line);border-radius:10px;padding:10px 12px;
+  font-size:10px;color:var(--dim2);letter-spacing:.08em;position:relative;overflow:hidden}
+.kpi:before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:linear-gradient(180deg,var(--cyan),transparent)}
+.kpi b{display:block;font-size:22px;font-family:Consolas,monospace;margin-bottom:2px;
+  background:linear-gradient(120deg,#fff,#7dd3fc);-webkit-background-clip:text;background-clip:text;color:transparent}
+.grid2{display:grid;grid-template-columns:330px 1fr;gap:14px;align-items:start}
+.steps{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.st{font-size:10px;color:var(--dim2);border:1px solid var(--line);border-radius:20px;padding:3px 9px;font-family:Consolas,monospace}
+.st.on{color:var(--cyan);border-color:rgba(34,211,238,.6);background:rgba(34,211,238,.1);animation:pulse 1.4s infinite}
+.st.done{color:var(--green);border-color:rgba(34,197,94,.45)}
+#log{font-family:Consolas,monospace;font-size:10.5px;color:var(--dim);line-height:1.75;height:200px;overflow:auto;
+  white-space:pre-wrap;word-break:break-all}
+.tablewrap{overflow:auto;border:1px solid var(--line);border-radius:12px;background:rgba(6,11,19,.62);max-height:calc(100vh - 300px)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{position:sticky;top:0;background:#0a1220;text-align:left;font-size:9.5px;letter-spacing:.14em;color:var(--dim2);
+  font-weight:600;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap;z-index:2}
+td{padding:8px 10px;border-bottom:1px solid rgba(90,160,255,.08);color:#cfe2f7;vertical-align:top;line-height:1.6}
+tbody tr:hover td{background:rgba(34,211,238,.05)}
+.plat{white-space:nowrap;color:var(--dim);font-size:11px}
+.minw{min-width:180px}
+.tag{display:inline-block;font-size:10px;border-radius:4px;padding:2px 6px;border:1px solid}
+.tag.hi{color:#6ee7b7;border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.1)}
+.tag.mid{color:#fcd34d;border-color:rgba(245,158,11,.45);background:rgba(245,158,11,.1)}
+.tag.lo{color:var(--dim2);border-color:rgba(120,140,165,.35);background:rgba(120,140,165,.08)}
+.tag.ok{color:var(--cyan);border-color:rgba(34,211,238,.45);background:rgba(34,211,238,.08)}
+.copy{font-size:10px;color:var(--cyan);border:1px solid rgba(34,211,238,.35);border-radius:5px;padding:2px 6px;
+  cursor:pointer;background:rgba(34,211,238,.07);margin-top:4px;display:inline-block}
+.copy:hover{background:rgba(34,211,238,.16)}
+.note{font-size:10px;color:var(--dim2);margin-top:3px;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.empty{color:var(--dim2);font-size:12px;text-align:center;padding:34px 0}
+.err{color:var(--red);font-size:11.5px;margin-top:8px}
+.hint{font-size:10.5px;color:var(--dim2);line-height:1.8;margin-top:8px}
+.chips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
+.chip{font-size:11px;color:var(--dim);border:1px solid var(--line);border-radius:20px;padding:4px 11px;cursor:pointer;
+  background:rgba(8,14,24,.7)}
+.chip.on{color:var(--cyan);border-color:rgba(34,211,238,.55);background:rgba(34,211,238,.08)}
+.jobhead{display:grid;grid-template-columns:1fr 80px 96px 78px 56px;gap:10px;font-size:10px;color:var(--dim2);letter-spacing:.1em;padding:2px 0 6px}
+.job{display:grid;grid-template-columns:1fr 80px 96px 78px 56px;gap:10px;align-items:center;padding:10px 0;
+  border-bottom:1px solid rgba(90,160,255,.1);font-size:12px}
+
+/* 嵌在桌面软件里、窗口变窄时的响应式 */
+@media (max-width: 1180px){
+  .app{grid-template-columns:150px 1fr}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .grid2{grid-template-columns:1fr}
+  .main{padding:12px}
+  .tablewrap{max-height:calc(100vh - 420px)}
+}
+@media (max-width: 860px){
+  .app{grid-template-columns:54px 1fr}
+  .nav a span:not(.i){display:none}
+  .sidefoot{display:none}
+}
+</style>
+</head>
+<body>
+<div class="tbar">
+  <div class="logo">线</div><span class="bname">线索采集台</span>
+  <div class="tstat"><span class="led" id="led"></span><span id="stat">待命</span>
+    <span id="hour">本小时 0 篇</span><span id="clk">--:--:--</span></div>
+</div>
+
+<div class="app">
+  <div class="side">
+    <div class="nav" id="nav">
+      <a data-v="v-run" class="on"><span class="i">◈</span>采集</a>
+      <a data-v="v-leads"><span class="i">▤</span>线索库</a>
+      <a data-v="v-job"><span class="i">◷</span>定时监控</a>
+      <a data-v="v-log"><span class="i">◎</span>运行记录</a>
+      <a data-v="v-set"><span class="i">⚙</span>设置</a>
+    </div>
+    <div class="sidefoot">
+      <div>只读公开评论</div>
+      <div>不点赞 / 不关注 / 不私信</div>
+      <div id="seen">已采笔记 0</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="view on" id="v-run">
+      <div class="grid2">
+        <div>
+          <div class="panel" style="margin-bottom:14px">
+            <div class="lbl">采集关键词</div>
+            <input id="kw" value="装修" placeholder="比如 装修 / 副业 / 医美">
+            <div class="hint" style="margin-top:6px">采集途中也能改词：暂停 → 改词 → 点「换词重跑」。</div>
+            <div class="lbl" style="margin-top:10px">每轮打开笔记数</div>
+            <select id="notes"><option>3</option><option selected>6</option><option>10</option><option>15</option></select>
+            <div style="display:flex;gap:8px;margin-top:12px">
+              <button id="go" style="flex:1">开始采集</button>
+              <button class="ghost" id="csv">导出 CSV</button>
+            </div>
+            <div id="ctrl" style="display:none;gap:8px;margin-top:8px">
+              <button class="ghost" id="pause" style="flex:1">暂停</button>
+              <button class="ghost" id="stop" style="flex:1;color:#fca5a5;border-color:rgba(244,63,94,.45)">停止采集</button>
+            </div>
+            <div class="steps">
+              <span class="st" id="s1">1 搜索</span><span class="st" id="s2">2 开笔记</span>
+              <span class="st" id="s3">3 读评论</span><span class="st" id="s4">4 打分</span>
+            </div>
+            <div class="err" id="err"></div>
+            <div class="hint" id="guardhint">风控：就绪</div>
+          </div>
+          <div class="panel">
+            <div class="lbl">运行日志</div>
+            <div id="log">等待开始…</div>
+          </div>
+        </div>
+        <div>
+          <div class="kpis">
+            <div class="kpi"><b id="k1">0</b>线索总数</div>
+            <div class="kpi"><b id="k2">0</b>高意向</div>
+            <div class="kpi"><b id="k3">0</b>待培育</div>
+            <div class="kpi"><b id="k4">0</b>噪音/同行</div>
+          </div>
+          <div class="tablewrap">
+            <table><thead><tr>
+              <th style="width:130px">客户</th><th style="width:70px">平台</th><th>评论</th>
+              <th style="width:52px">意向</th><th style="width:98px">需求点</th><th style="width:240px">话术</th>
+            </tr></thead><tbody id="tb"></tbody></table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="view" id="v-leads">
+      <div class="chips" id="filters">
+        <span class="chip on" data-f="">全部</span><span class="chip" data-f="高">高意向</span>
+        <span class="chip" data-f="中">待培育</span><span class="chip" data-f="低">噪音/同行</span>
+        <button class="ghost mini" id="cmtall" style="margin-left:auto">一键评论高意向</button>
+        <span class="hint" id="ccount" style="margin:0"></span>
+        <input id="q" placeholder="按关键词过滤" style="width:170px">
+      </div>
+      <div class="tablewrap" style="max-height:calc(100vh - 150px)">
+        <table><thead><tr>
+          <th style="width:74px">关注</th><th style="width:72px">评论</th>
+          <th style="width:92px">时间</th><th style="width:90px">关键词</th><th style="width:120px">客户</th>
+          <th>评论</th><th style="width:52px">意向</th><th style="width:96px">需求点</th><th style="width:230px">话术</th>
+        </tr></thead><tbody id="tb2"></tbody></table>
+      </div>
+      <div class="panel" id="fpanel" style="display:none;margin-top:12px">
+        <div class="lbl" id="ftitle">关注进度</div>
+        <div id="flog" class="hint" style="font-family:Consolas,monospace;max-height:170px;overflow:auto"></div>
+      </div>
+      <div class="panel" id="cpanel" style="display:none;margin-top:12px">
+        <div class="lbl" id="ctitle">评论进度</div>
+        <div id="clog" class="hint" style="font-family:Consolas,monospace;max-height:170px;overflow:auto"></div>
+      </div>
+    </div>
+
+    <div class="view" id="v-job">
+      <div class="panel" style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div class="lbl" style="margin:0">定时任务（到点自动跑一轮，走同一套风控）</div>
+          <button class="mini" id="addjob">＋ 加一个关键词</button>
+        </div>
+        <div class="jobhead"><span>关键词</span><span>每轮篇数</span><span>间隔（分钟）</span><span>启用</span><span></span></div>
+        <div id="jobs"></div>
+        <div class="hint">每个任务按自己的间隔跑；两次任务之间还有 10 分钟全局冷却，23:00-07:00 不跑。</div>
+        <div style="margin-top:12px"><button id="savejob">保存任务</button></div>
+      </div>
+      <div class="panel">
+        <div class="lbl">风控状态</div>
+        <div id="guardbox" class="hint"></div>
+        <div id="guardcfg" class="hint"></div>
+      </div>
+    </div>
+
+    <div class="view" id="v-log">
+      <div class="tablewrap" style="max-height:calc(100vh - 120px)">
+        <table><thead><tr>
+          <th style="width:150px">时间</th><th style="width:110px">任务</th><th style="width:96px">关键词</th>
+          <th style="width:64px">篇数</th><th style="width:80px">新线索</th><th style="width:70px">高意向</th>
+          <th style="width:64px">耗时</th><th>结果</th>
+        </tr></thead><tbody id="tb3"></tbody></table>
+      </div>
+    </div>
+
+    <div class="view" id="v-set">
+      <div class="panel" style="margin-bottom:14px;max-width:760px">
+        <div class="lbl">绑定的小红书账号</div>
+        <div id="acct" class="hint">还没绑定。点下面按钮，从采集浏览器里读当前登录的账号。</div>
+        <button id="bind" style="margin-top:10px;padding:8px 14px">读取当前登录账号并绑定</button>
+      </div>
+      <div class="panel" style="margin-bottom:14px;max-width:760px">
+        <div class="lbl">评论词库（一键评论时从这里随机挑一条）</div>
+        <textarea id="replies" rows="8" placeholder="一行一条，序号自动生成"></textarea>
+        <div class="hint" id="rcount"></div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:10px">
+          <button id="saverep" style="padding:8px 14px">保存词库</button>
+          <span class="hint" style="margin:0">不要写链接、微信号、电话，容易判定营销</span>
+        </div>
+      </div>
+      <div class="panel" style="margin-bottom:14px;max-width:760px">
+        <div class="lbl">评论关键词过滤（只留命中这些词的评论）</div>
+        <textarea id="filters2" rows="4"></textarea>
+        <div class="hint">逗号或换行分隔。留空 = 不过滤。原软件那套是 求带/怎么做/创业/副业/学生/宝妈/野路子。</div>
+        <div style="display:flex;gap:12px;align-items:center;margin-top:10px">
+          <label style="font-size:12px;color:var(--dim)"><input type="checkbox" id="usef" style="width:auto"> 启用过滤</label>
+          <button id="savef" style="padding:8px 14px">保存</button>
+        </div>
+      </div>
+      <div class="panel" style="max-width:760px">
+        <div class="lbl">风控参数（当前生效值）</div>
+        <div class="hint" id="guardcfg2"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let S = {}, leads = [], filterIntent = "", conf = {jobs:[], filters:[]}, followed = new Set(), commented = new Set();
+const uidOf = r => { const m = String(r.user_url||"").match(/\/user\/profile\/([0-9a-f]{8,})/); return m?m[1]:""; };
+function commentBtn(r){
+  if (commented.has(r.key)) return '<span class="tag" style="color:#fca5a5;border-color:rgba(244,63,94,.4);background:rgba(244,63,94,.08);white-space:nowrap">已评论</span>';
+  if (!r.note_url) return '<span style="color:#3f4d60;font-size:10px">—</span>';
+  return '<button class="mini c1" data-k="'+r.key+'">评论</button>';
+}
+function followBtn(r){
+  const u = uidOf(r);
+  if (followed.has(u)) return '<span class="tag ok" style="white-space:nowrap">已关注</span>';
+  if (!r.user_url) return '<span style="color:#3f4d60;font-size:10px">—</span>';
+  return '<button class="mini f1" data-k="'+r.key+'">关注</button>';
+}
+
+function view(v){
+  document.querySelectorAll(".view").forEach(e=>e.classList.toggle("on", e.id===v));
+  document.querySelectorAll("#nav a").forEach(a=>a.classList.toggle("on", a.dataset.v===v));
+  if(v==="v-leads") loadLeads();
+  if(v==="v-job"||v==="v-set") loadConf();
+  if(v==="v-log") loadRuns();
+}
+document.querySelectorAll("#nav a").forEach(a=>a.onclick=()=>view(a.dataset.v));
+
+function paintSteps(step){
+  const idx = ["搜索","打开笔记","读取评论","完成"].indexOf(step);
+  ["s1","s2","s3","s4"].forEach((id,k)=>{
+    const e=document.getElementById(id);
+    e.className = "st" + (step==="完成" ? " done" : idx>k ? " done" : idx===k ? " on" : "");
+  });
+}
+
+async function refresh(){
+  try{ S = await (await fetch("/api/status")).json(); }catch(e){ return; }
+  $("#stat").textContent = S.error ? "出错" : S.step==="完成" ? "完成 "+S.elapsed+"s" : S.running ? "采集中 "+S.elapsed+"s" : "待命";
+  $("#led").className = "led" + (S.error?" err":(S.running?" run":""));
+  $("#go").disabled = !!S.running;
+  $("#go").textContent = S.running ? (S.paused ? "换词重跑" : "采集中…") : "开始采集";
+  $("#go").disabled = S.running && !S.paused;
+  $("#ctrl").style.display = "flex";
+  $("#pause").disabled = !S.running;
+  $("#stop").disabled = !S.running;
+  $("#pause").textContent = S.paused ? "继续" : "暂停";
+  $("#err").textContent = S.error || "";
+  $("#log").textContent = (S.log||[]).join("\n") || "等待开始…";
+  $("#log").scrollTop = $("#log").scrollHeight;
+  if(S.step && S.step!=="idle") paintSteps(S.step);
+  $("#seen").textContent = "已采笔记 " + (S.notes_seen||0);
+  const g = S.guard || {};
+  $("#hour").textContent = "本小时 " + (g.hour_count||0) + " 篇";
+  $("#guardhint").textContent = "风控：" + (g.block || "就绪");
+  if(S.step==="完成") await loadLeads();
+}
+
+async function loadLeads(){
+  const d = await (await fetch("/api/leads?limit=800")).json();
+  leads = d.rows || [];
+  followed = new Set(d.followed || []);
+  commented = new Set(d.commented || []);
+  $("#k1").textContent=d.stats.all; $("#k2").textContent=d.stats.hi;
+  $("#k3").textContent=d.stats.mid; $("#k4").textContent=d.stats.lo;
+  renderLeads();
+}
+
+function renderLeads(){
+  const q = ($("#q")?.value||"").trim();
+  let list = leads.filter(r=>!filterIntent || r.intent===filterIntent);
+  if(q) list = list.filter(r=>(r.text||"").includes(q)||(r.note||"").includes(q)||(r.name||"").includes(q));
+  const emptyMsg = '<tr><td colspan="6" class="empty">没有线索，去「采集」跑一轮</td></tr>';
+  if(!list.length){
+    $("#tb").innerHTML = emptyMsg;
+    const t2=$("#tb2"); if(t2) t2.innerHTML = '<tr><td colspan="7" class="empty">没有线索</td></tr>';
+    return;
+  }
+  $("#tb").innerHTML = list.slice(0,300).map(r=>`<tr>
+    <td><div style="display:flex;gap:4px;flex-wrap:wrap">${followBtn(r)}${commentBtn(r)}</div><div style="margin-top:4px">${esc(r.name)}</div><div class="note">${esc(r.note||"")}</div></td>
+    <td class="plat">${esc(r.platform||"小红书")}</td><td class="minw">${esc(r.text)}</td>
+    <td><span class="tag ${r.intent==="高"?"hi":r.intent==="中"?"mid":"lo"}">${r.intent}</span></td>
+    <td>${esc(r.need)}</td>
+    <td>${esc(r.reply)}<div class="copy" data-k="${r.key}">复制话术</div></td></tr>`).join("");
+  const t2 = $("#tb2");
+  if(t2) t2.innerHTML = list.slice(0,400).map(r=>{const u=uidOf(r);return `<tr>
+    <td>${followBtn(r)}</td><td>${commentBtn(r)}</td>
+    <td>${esc((r.ts||"").slice(5))}</td><td>${esc(r.kw||"")}</td>
+    <td>${esc(r.name)}<div class="note">${esc(r.note||"")}</div></td>
+    <td class="minw">${esc(r.text)}</td>
+    <td><span class="tag ${r.intent==="高"?"hi":r.intent==="中"?"mid":"lo"}">${r.intent}</span></td>
+    <td>${esc(r.need)}</td><td>${esc(r.reply)}<div class="copy" data-k="${r.key}">复制</div></td></tr>`}).join("");
+
+}
+
+document.addEventListener("click", e=>{
+  if(e.target.classList.contains("copy")){
+    const r = leads.find(x=>x.key===e.target.dataset.k);
+    if(!r) return;
+    navigator.clipboard.writeText(r.reply).then(()=>{
+      const t=e.target.textContent; e.target.textContent="已复制 ✓";
+      setTimeout(()=>e.target.textContent=t, 1200);
+    });
+  }
+  if(e.target.classList.contains("chip")){
+    document.querySelectorAll(".chip").forEach(c=>c.classList.remove("on"));
+    e.target.classList.add("on"); filterIntent = e.target.dataset.f; renderLeads();
+  }
+});
+
+$("#go").onclick = async ()=>{
+  const kw = $("#kw").value.trim();
+  if(!kw){ $("#err").textContent="先填关键词"; return; }
+  $("#err").textContent="";
+  const notes = parseInt($("#notes").value,10);
+  const d = await (await fetch("/api/collect",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({kw,notes})})).json();
+  if(d.error) $("#err").textContent = d.error;
+  refresh();
+};
+$("#csv").onclick = ()=> location.href = "/api/csv";
+$("#q").oninput = renderLeads;
+
+async function loadConf(){
+  conf = await (await fetch("/api/config")).json();
+  const g = (await (await fetch("/api/status")).json()).guard || {};
+  $("#replies").value = (conf.replies||[]).map(function(x,i){ return (i+1)+". "+x; }).join(String.fromCharCode(10));
+  if($("#rcount")) $("#rcount").textContent = "当前 "+(conf.replies||[]).length+" 条";
+  $("#filters2").value = (conf.filters||[]).join("，");
+  $("#usef").checked = !!conf.use_filter;
+  const gc = g.config || {};
+  const txt = `每篇间隔 ${gc.min_gap}-${gc.max_gap}s（每 ${gc.long_rest_every} 篇长休 ${(gc.long_rest||[]).join("-")}s）｜单轮上限 ${gc.max_notes_run} 篇｜每小时上限 ${gc.hourly_cap} 篇（本小时 ${g.hour_count||0}）｜任务冷却 ${gc.cooldown_min} 分钟｜安静时段 ${(gc.quiet||[])[0]}:00-${(gc.quiet||[])[1]}:00｜连续失败 ${gc.fail_streak_limit} 次退避 ${gc.fail_pause_min} 分钟`;
+  if($("#guardcfg")) $("#guardcfg").textContent = txt;
+  if($("#guardcfg2")) $("#guardcfg2").textContent = txt;
+  if($("#guardbox")) $("#guardbox").textContent = g.block ? ("当前不可采集：" + g.block) : "当前可采集";
+  renderJobs();
+  paintAccount();
+}
+
+function renderJobs(){
+  const box = $("#jobs"); if(!box) return;
+  const jobs = conf.jobs || [];
+  box.innerHTML = jobs.length ? jobs.map((j,i)=>`<div class="job">
+    <input value="${esc(j.kw)}" data-i="${i}" data-f="kw" placeholder="关键词">
+    <input type="number" min="1" max="15" value="${j.notes||6}" data-i="${i}" data-f="notes" title="篇数">
+    <input type="number" min="15" max="1440" value="${j.every_min||60}" data-i="${i}" data-f="every_min" title="间隔分钟">
+    <label style="font-size:11px;color:var(--dim)"><input type="checkbox" ${j.enabled?"checked":""} data-i="${i}" data-f="enabled" style="width:auto"> 启用</label>
+    <button class="ghost mini" data-del="${i}">删</button>
+  </div>`).join("") : '<div class="empty">还没有定时任务</div>';
+}
+
+$("#jobs").addEventListener("input", e=>{
+  const i = e.target.dataset.i, f = e.target.dataset.f;
+  if(i===undefined) return;
+  const j = conf.jobs[+i]; if(!j) return;
+  j[f] = f==="enabled" ? e.target.checked : e.target.value;
+});
+$("#jobs").addEventListener("click", e=>{
+  if(e.target.dataset.del!==undefined){ conf.jobs.splice(+e.target.dataset.del,1); renderJobs(); }
+});
+$("#addjob").onclick = ()=>{ conf.jobs = conf.jobs||[]; conf.jobs.push({kw:"",notes:6,every_min:60,enabled:false,last_run:0}); renderJobs(); };
+$("#savejob").onclick = async ()=>{
+  const jobs = (conf.jobs||[]).filter(j=>String(j.kw||"").trim()).map(j=>({
+    kw:String(j.kw).trim(), notes:Math.max(1,Math.min(15,+j.notes||6)),
+    every_min:Math.max(15,Math.min(1440,+j.every_min||60)),
+    enabled: !!j.enabled, last_run: j.last_run||0
+  }));
+  await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({jobs})});
+  loadConf();
+};
+$("#savef").onclick = async ()=>{
+  const filters = $("#filters2").value.split(/[,，\n]/).map(s=>s.trim()).filter(Boolean);
+  await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({filters, use_filter: $("#usef").checked})});
+  loadConf();
+};
+
+async function loadRuns(){
+  const d = await (await fetch("/api/runs")).json();
+  const rs = d.rows||[];
+  $("#tb3").innerHTML = rs.length ? rs.map(r=>`<tr>
+    <td>${esc(r.t)}</td><td>${esc(r.job||"手动")}</td><td>${esc(r.kw)}</td>
+    <td>${r.notes||0}</td><td>${r.new||0}</td><td>${r.hi||0}</td>
+    <td>${r.sec||0}s</td>
+    <td>${r.ok?'<span class="tag ok">成功</span>':('<span class="tag lo">失败</span> '+esc(r.err||""))}</td>
+  </tr>`).join("") : '<tr><td colspan="8" class="empty">还没有运行记录</td></tr>';
+}
+
+
+$("#pause").onclick = async ()=>{
+  const act = S.paused ? "resume" : "pause";
+  await fetch("/api/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:act})});
+  refresh();
+};
+$("#stop").onclick = async ()=>{
+  if(!confirm("停止这一轮？已经采到的会保留。")) return;
+  await fetch("/api/control",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"stop"})});
+  refresh();
+};
+document.addEventListener("click", async e=>{
+  const cb = e.target.closest(".c1");
+  if(cb && !cb.disabled){
+    cb.disabled = true; cb.textContent = "评论中…";
+    const d = await (await fetch("/api/comment",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({keys:[cb.dataset.k]})})).json();
+    if(d.error){ cb.textContent="失败"; cb.title=d.error; setTimeout(()=>{cb.textContent="评论";cb.disabled=false;},1800); return; }
+    $("#cpanel").style.display="block"; pollComment();
+  }
+  const b = e.target.closest(".f1");
+  if(!b || b.disabled) return;
+  b.disabled = true; b.textContent = "关注中…";
+  const d = await (await fetch("/api/follow",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({keys:[b.dataset.k]})})).json();
+  if(d.error){ b.textContent="失败"; b.title=d.error; setTimeout(()=>{b.textContent="关注";b.disabled=false;},1800); return; }
+  $("#fpanel").style.display="block";
+  pollFollow();
+});
+async function pollFollow(){
+  const d = await (await fetch("/api/follow/status")).json();
+  $("#ftitle").textContent = "关注进度 "+(d.done||0)+"/"+(d.total||0)+" · 成功 "+(d.ok||0)+" · 跳过 "+(d.skipped||0)+" · 失败 "+(d.failed||0);
+  $("#flog").innerHTML = (d.log||[]).map(esc).join("<br>");
+  if(d.running) setTimeout(pollFollow, 1500); else loadLeads();
+}
+$("#cmtall").onclick = async ()=>{
+  const n = leads.filter(r=>r.intent==="高" && r.note_url && !commented.has(r.key)).length;
+  if(!n){ alert("现在没有可评论的高意向客户（需要带笔记链接）"); return; }
+  if(!confirm("给 "+Math.min(n,10)+" 位高意向客户各回一条评论？"+String.fromCharCode(10)+"词库随机挑，同一批不重复。")) return;
+  const d = await (await fetch("/api/comment",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({high_intent:true})})).json();
+  if(d.error){ alert(d.error); return; }
+  $("#cpanel").style.display="block"; pollComment();
+};
+async function pollComment(){
+  const d = await (await fetch("/api/comment/status")).json();
+  $("#ctitle").textContent = "评论进度 "+(d.done||0)+"/"+(d.total||0)+" · 成功 "+(d.ok||0)+" · 失败 "+(d.failed||0)+" · 今日 "+(d.today||0)+"/"+(d.cap||15)
+    + ((d.limit_left_min||0) > 0 ? " · 限流中，还需等 "+(d.limit_left_min)+" 分钟" : "");
+  $("#clog").innerHTML = (d.log||[]).map(esc).join("<br>");
+  if(d.running) setTimeout(pollComment, 1800); else loadLeads();
+}
+$("#saverep").onclick = async ()=>{
+  const lines = $("#replies").value.split(String.fromCharCode(10)).map(function(x){ return x.replace(/^\s*\d+[.、)]\s*/,"").trim(); }).filter(Boolean);
+  await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({replies:lines})});
+  $("#rcount").textContent = "已保存 "+lines.length+" 条";
+  loadConf();
+};
+$("#bind").onclick = async ()=>{
+  $("#acct").textContent="正在从采集浏览器读取登录账号…";
+  await fetch("/api/account/refresh",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+  setTimeout(paintAccount, 9000);
+};
+async function paintAccount(){
+  const d = await (await fetch("/api/account")).json();
+  const a = d.account||{};
+  if(!a.nickname){ $("#acct").textContent="没读到登录账号：确认采集浏览器里已登录小红书，再点一次。"; return; }
+  $("#acct").innerHTML = '<b style="color:#e8f2ff">'+esc(a.nickname)+'</b> · ID '+esc(a.user_id||"—")+' · 绑定于 '+esc(a.bound_at||"")+' · 已关注 '+(d.followed||0)+' 人';
+}
+
+setInterval(()=>{$("#clk").textContent=new Date().toLocaleTimeString("zh-CN",{hour12:false})},1000);
+setInterval(refresh, 1500);
+refresh(); loadLeads();
+</script>
+</body>
+</html>

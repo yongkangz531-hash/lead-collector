@@ -1,0 +1,8 @@
+{
+  "name": "douyin-lead-desk",
+  "version": "1.0.0",
+  "description": "抖音采集台",
+  "main": "main.js",
+  "author": "anshu",
+  "license": "UNLICENSED"
+}
