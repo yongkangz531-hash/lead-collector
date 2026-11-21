@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, Menu } = require('electron');
+const { app, BrowserWindow, WebContentsView, Menu, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const http = require('http');
@@ -63,8 +63,9 @@ function layout() {
     uiView.setBounds({ x: 0, y: 0, width, height });
     xhsView.setBounds({ x: width, y: 0, width: 0, height: 0 });
   } else if (mode === 'xhs') {
-    uiView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-    xhsView.setBounds({ x: 0, y: 0, width, height });
+    const strip = 40; // 顶上留一条控制台，否则切不回来
+    uiView.setBounds({ x: 0, y: 0, width, height: strip });
+    xhsView.setBounds({ x: 0, y: strip, width, height: height - strip });
   } else {
     xhsView.setBounds({ x: 0, y: 0, width: split - 3, height });
     uiView.setBounds({ x: split + 3, y: 0, width: width - split - 3, height });
@@ -75,7 +76,8 @@ function setMode(m) {
   mode = m;
   layout();
   const name = { split: '分屏', ui: '只看界面', xhs: '只看浏览器' }[m];
-  if (win) win.setTitle('线索采集台 · ' + name + '（Ctrl+1/2/3 切换）');
+  if (win) win.setTitle('小红书采集台 · ' + name + '（Ctrl+1/2/3 切换）');
+  try { if (uiView) uiView.webContents.send('xhs-mode-state', mode); } catch (e) {}
 }
 
 function createWindow() {
@@ -86,12 +88,16 @@ function createWindow() {
     minHeight: 700,
     backgroundColor: '#04060c',
     autoHideMenuBar: true,
-    title: '线索采集台',
+    title: '小红书采集台',
     show: true,
   });
 
   uiView = new WebContentsView({
-    webPreferences: { partition: 'persist:ui', contextIsolation: true },
+    webPreferences: {
+      partition: 'persist:ui',
+      contextIsolation: true,
+      preload: path.join(__dirname, 'ui-preload.js'),
+    },
   });
   xhsView = new WebContentsView({
     webPreferences: {
@@ -139,6 +145,13 @@ function createWindow() {
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
+
+  ipcMain.on('xhs-mode', (e, m) => {
+    if (m === 'split' || m === 'ui' || m === 'xhs') setMode(m);
+  });
+  ipcMain.on('xhs-mode-get', (e) => {
+    try { e.sender.send('xhs-mode-state', mode); } catch (err) {}
+  });
 
   // 拉起本地服务（同一个进程里跑采集/关注/评论）
   pyProc = spawn(PY, [APP], {

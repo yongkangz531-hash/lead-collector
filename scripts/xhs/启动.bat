@@ -1,10 +1,10 @@
 @echo off
 chcp 936 >nul
-title 线索采集台
+title 小红书采集台
 cd /d "%~dp0"
 
 echo ==========================================
-echo    线索采集台  启动中...
+echo    小红书采集台  启动中...
 echo ==========================================
 echo.
 
@@ -27,7 +27,7 @@ rem 2) 检查本地服务 8788
 netstat -ano | findstr ":8788" | findstr LISTENING >nul
 if errorlevel 1 (
   echo [2/3] 启动本地服务...
-  start "线索采集台-服务" /min "%~dp0.venv\Scripts\python.exe" app.py
+  start "小红书采集台-服务" /min "%~dp0.venv\Scripts\python.exe" app.py
   ping -n 4 127.0.0.1 >nul
 ) else (
   echo [2/3] 本地服务已在运行

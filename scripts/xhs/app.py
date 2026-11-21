@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""线索采集台 · 本地服务（采集 + 定时监控 + 台账 + 风控）
+"""小红书采集台 · 本地服务（采集 + 定时监控 + 台账 + 风控）
 
   python app.py    → http://127.0.0.1:8788
 
@@ -20,8 +20,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs
 
+import re
+
 import collect2
 import comment as comment_mod
+import dm as dm_mod
 import control
 import follow
 import guard
@@ -39,6 +42,10 @@ DEFAULT_CONF = {
     "collect": {"min_likes": 0, "min_comments": 0, "include": [], "exclude": [],
                 "city": "", "only_uid": True, "monitor_min": 30,
                 "comment_gap": 45, "follow_gap": 6, "realtime_follow": False},
+    "dm": {"gap": 60, "daily_cap": 20, "messages": [
+        "看到你在这篇下面的评论，我这边正好有一份整理好的资料，需要的话我发你",
+        "你说的这个情况我遇到过，能少走不少弯路，要不要我把那份清单发你",
+        "这个问题我整理过一份对比，直接发你看？"]},
     "replies": [
         "我之前也纠结过这个，后来找人算了一版，比想的便宜",
         "这个我整理过一份对比，需要的话跟我说",
@@ -57,6 +64,9 @@ FLOCK = threading.Lock()
 CSTATE = {"running": False, "log": [], "ok": 0, "skipped": 0, "failed": 0, "done": 0, "total": 0}
 CLOCK = threading.Lock()
 COMMENT_DAILY_CAP = 15
+
+DSTATE = {"running": False, "log": [], "ok": 0, "skipped": 0, "failed": 0, "done": 0, "total": 0}
+DLOCK = threading.Lock()
 
 
 def clog(msg):
@@ -122,6 +132,32 @@ def account_worker():
         print("读账号失败：" + str(e)[:120], flush=True)
 
 
+def dmlog(msg):
+    with DLOCK:
+        DSTATE["log"].append(msg)
+        DSTATE["log"][:] = DSTATE["log"][-120:]
+    print(msg, flush=True)
+
+
+def dm_worker(targets, messages, gap, cap):
+    control.reset()
+    with DLOCK:
+        DSTATE.update({"running": True, "log": [], "ok": 0, "skipped": 0, "failed": 0,
+                       "done": 0, "total": len(targets)})
+    try:
+        res = asyncio.run(dm_mod.run(targets, messages, log=dmlog,
+                                     gap=(gap, int(gap * 1.5)), daily_cap=cap))
+        with DLOCK:
+            DSTATE.update(res)
+            DSTATE["running"] = False
+            DSTATE["done"] = len(targets)
+    except Exception as e:
+        with DLOCK:
+            DSTATE["running"] = False
+            DSTATE["log"].append("出错：" + str(e)[:120])
+        traceback.print_exc()
+
+
 def apply_filters(rows, conf, note_likes=None):
     c = (conf.get("collect") or {})
     inc = [x for x in (c.get("include") or []) if x]
@@ -185,6 +221,70 @@ def note_worker(url):
         log("出错：" + str(e)[:160])
 
 
+def ctime_days(s):
+    """评论相对时间（3周前 / 2月前…）折算成天数；未知返回很大的数"""
+    s = (s or "").strip()
+    if not s:
+        return 99999
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})", s)
+    if m:
+        try:
+            return int((time.time() - time.mktime(time.strptime(m.group(0), "%Y-%m-%d"))) / 86400)
+        except Exception:
+            return 99999
+    if "刚刚" in s or "秒前" in s:
+        return 0
+    n = re.search(r"(\d+)", s)
+    if not n:
+        return 99999
+    v = int(n.group(1))
+    if "分钟" in s:
+        return 0
+    if "小时" in s:
+        return 0
+    if "天" in s:
+        return v
+    if "周" in s:
+        return v * 7
+    if "月" in s:
+        return v * 30
+    if "年" in s:
+        return v * 365
+    return 99999
+
+
+def ctime_min(s):
+    """排序用：折算成分量级（分钟），未知给很大的数"""
+    s = (s or "").strip()
+    if not s:
+        return 10 ** 9
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})", s)
+    if m:
+        try:
+            return int((time.time() - time.mktime(time.strptime(m.group(0), "%Y-%m-%d"))) / 60)
+        except Exception:
+            return 10 ** 9
+    if "刚刚" in s or "秒前" in s:
+        return 0
+    n = re.search(r"(\d+)", s)
+    if not n:
+        return 10 ** 9
+    v = int(n.group(1))
+    if "分钟" in s:
+        return v
+    if "小时" in s:
+        return v * 60
+    if "天" in s:
+        return v * 1440
+    if "周" in s:
+        return v * 10080
+    if "月" in s:
+        return v * 43200
+    if "年" in s:
+        return v * 525600
+    return 10 ** 9
+
+
 def load_conf():
     try:
         c = json.loads(CONF.read_text(encoding="utf-8"))
@@ -207,7 +307,7 @@ def log(msg):
     print(msg, flush=True)
 
 
-def worker(kw, notes, job="手动", force=False):
+def worker(kw, notes, job="手动", force=False, kw2_list=None):
     t0 = time.time()
     conf = load_conf()
     control.reset()
@@ -218,7 +318,26 @@ def worker(kw, notes, job="手动", force=False):
     try:
         allow = guard.begin(notes, force=force)
         log(f"风控允许本轮最多 {allow} 篇")
-        rows = asyncio.run(collect2.run(kw, allow, log=log, skip=store.note_seen))
+        terms = [(kw, "")] + [(f"{kw} {k}".strip(), k) for k in (kw2_list or []) if str(k).strip()]
+        rows = []
+        for ti, (term, k2) in enumerate(terms):
+            if len(terms) > 1:
+                log(f"[{ti + 1}/{len(terms)}] 搜索「{term}」")
+            part = asyncio.run(collect2.run(term, allow, log=log, skip=store.note_seen))
+            for r in part:
+                r["kw2"] = k2
+                r["kw"] = kw
+            rows.extend(part)
+        if len(terms) > 1:
+            seen, uniq = set(), []
+            for r in rows:
+                k = (r.get("note_id"), r.get("user_url"), (r.get("text") or "")[:24])
+                if k in seen:
+                    continue
+                seen.add(k)
+                uniq.append(r)
+            log(f"二级词合并去重：{len(rows)} → {len(uniq)} 条")
+            rows = uniq
 
         rows = apply_filters(rows, conf)
         filters = [f for f in conf.get("filters", []) if f]
@@ -328,15 +447,45 @@ class H(BaseHTTPRequestHandler):
             rows = store.all_leads(q.get("kw") or None, limit=int(q.get("limit", 800)))
             if q.get("intent"):
                 rows = [r for r in rows if r.get("intent") == q["intent"]]
+            if q.get("kw2"):
+                rows = [r for r in rows if (r.get("kw2") or "") == q["kw2"]]
+            field = q.get("field") or ""
+            days = int(q.get("days") or 0)
+            order = q.get("order") or "desc"
+            if field == "ctime":
+                if days:
+                    rows = [r for r in rows if ctime_days(r.get("ctime")) <= days]
+                rows.sort(key=lambda r: ctime_min(r.get("ctime")), reverse=(order == "asc"))
+            else:
+                if days:
+                    cut = time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
+                    rows = [r for r in rows if str(r.get("ts") or "")[:10] >= cut]
+                if order == "asc":
+                    rows = list(reversed(rows))
+            dfrom, dto = q.get("dfrom") or "", q.get("dto") or ""
+            if dfrom:
+                rows = [r for r in rows if str(r.get("ts") or "")[:10] >= dfrom]
+            if dto:
+                rows = [r for r in rows if str(r.get("ts") or "")[:10] <= dto]
+            qtext = (q.get("q") or "").strip()
+            if qtext:
+                rows = [r for r in rows if qtext in (r.get("text") or "") or qtext in (r.get("name") or "")]
             fu = []
             for url in (r.get("user_url") or "" for r in rows):
                 if "/user/profile/" in url:
                     fu.append(url.split("/user/profile/")[1].split("?")[0])
             fl = store.followed()
             cm = store.commented()
+            dmm = store.dm_all()
+            du = set()
+            for r in rows:
+                u = r.get("user_url") or ""
+                if "/user/profile/" in u:
+                    du.add(u.split("/user/profile/")[1].split("?")[0])
             return self._json({"rows": rows, "stats": stats(rows),
                                "followed": [u for u in set(fu) if u in fl],
-                               "commented": [k for k in (r.get("key") for r in rows) if k in cm]})
+                               "commented": [k for k in (r.get("key") for r in rows) if k in cm],
+                               "dmed": [u for u in du if u in dmm]})
 
         if p == "/api/csv":
             rows = store.all_leads(q.get("kw") or None, limit=100000)
@@ -402,6 +551,16 @@ class H(BaseHTTPRequestHandler):
                 snap = dict(FSTATE)
             return self._json(snap)
 
+        if p == "/api/dm/status":
+            with DLOCK:
+                snap = dict(DSTATE)
+            conf = load_conf()
+            dmc = conf.get("dm") or {}
+            snap["today"] = store.dm_today()
+            snap["total"] = store.dm_total()
+            snap["cap"] = int(dmc.get("daily_cap") or 20)
+            return self._json(snap)
+
         if p == "/api/runs":
             return self._json({"rows": store.recent_runs(40)})
 
@@ -440,9 +599,11 @@ class H(BaseHTTPRequestHandler):
             reason = guard.block_reason(force=bool(body.get("force")), skip_cool=bool(body.get("skip_cool")))
             if reason:
                 return self._json({"error": reason}, 429)
-            threading.Thread(target=worker, args=(kw, notes, "手动", bool(body.get("force"))),
+            kw2 = [str(x).strip() for x in (body.get("kw2") or []) if str(x).strip()]
+            threading.Thread(target=worker,
+                             args=(kw, notes, "手动", bool(body.get("force")), kw2),
                              daemon=True).start()
-            return self._json({"ok": True})
+            return self._json({"ok": True, "kw2": kw2})
 
         if p == "/api/control":
             act = (body.get("action") or "").strip()
@@ -463,6 +624,40 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/account/refresh":
             threading.Thread(target=account_worker, daemon=True).start()
             return self._json({"ok": True})
+
+        if p == "/api/dm":
+            keys = body.get("keys") or []
+            if not keys:
+                return self._json({"error": "没勾选要私信的人"}, 400)
+            with DLOCK:
+                if DSTATE["running"]:
+                    return self._json({"error": "上一批私信还在发"}, 409)
+            conf = load_conf()
+            dmc = conf.get("dm") or {}
+            cap = int(dmc.get("daily_cap") or 20)
+            if store.dm_today() >= cap:
+                return self._json({"error": f"今天已私信 {store.dm_today()} 条，到日上限 {cap} 了"}, 429)
+            msgs = [m for m in (dmc.get("messages") or []) if str(m).strip()]
+            if not msgs:
+                return self._json({"error": "先在「私信内容」里写几句要发的话"}, 400)
+            by_key = {r.get("key"): r for r in store.all_leads(limit=100000)}
+            targets, seen_uid = [], set()
+            for k in keys:
+                r = by_key.get(k)
+                if not r:
+                    continue
+                url = r.get("user_url") or ""
+                uid = url.split("/user/profile/")[1].split("?")[0].strip("/") if "/user/profile/" in url else ""
+                if not uid or uid in seen_uid:
+                    continue
+                seen_uid.add(uid)
+                targets.append({"uid": uid, "name": r.get("name", ""),
+                                "text": r.get("text", ""), "reply": r.get("reply", "")})
+            if not targets:
+                return self._json({"error": "勾选的这些没有主页链接，先重新采集一批"}, 400)
+            gap = int(dmc.get("gap") or 60)
+            threading.Thread(target=dm_worker, args=(targets, msgs, gap, cap), daemon=True).start()
+            return self._json({"ok": True, "count": len(targets)})
 
         if p == "/api/follow":
             keys = body.get("keys") or []
@@ -576,6 +771,10 @@ class H(BaseHTTPRequestHandler):
                 cur = conf.get("collect") or {}
                 cur.update(body["collect"] or {})
                 conf["collect"] = cur
+            if "dm" in body:
+                cur = conf.get("dm") or {}
+                cur.update(body["dm"] or {})
+                conf["dm"] = cur
             if "replies" in body:
                 conf["replies"] = [str(x).strip() for x in body["replies"] if str(x).strip()]
             if "filters" in body:
@@ -593,5 +792,9 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     threading.Thread(target=scheduler, daemon=True).start()
-    print(f"线索采集台已启动 → http://127.0.0.1:{PORT}")
-    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    print(f"小红书采集台已启动 → http://127.0.0.1:{PORT}")
+    class Server(ThreadingHTTPServer):
+        allow_reuse_address = False
+        daemon_threads = True
+
+    Server(("127.0.0.1", PORT), H).serve_forever()

@@ -72,7 +72,7 @@ def score_rows(rows):
                 need = label
                 break
 
-        out.append({
+        out.append(dict(r, **{
             "name": r.get("name", ""),
             "platform": r.get("platform", "小红书"),
             "note": r.get("note", ""),
@@ -86,7 +86,7 @@ def score_rows(rows):
             "like": r.get("like", ""),
             "ip": r.get("ip", ""),
             "ctime": r.get("ctime", ""),
-        })
+        }))
     out.sort(key=lambda x: ORDER[x["intent"]])
     return out
 

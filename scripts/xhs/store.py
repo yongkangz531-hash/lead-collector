@@ -184,7 +184,6 @@ def mark_followed(uid: str, name: str = "", url: str = ""):
 # ---------- 评论台账 ----------
 COMMENTED = DATA / "commented.json"
 
-
 def commented() -> dict:
     return _read_json(COMMENTED, {})
 
@@ -273,3 +272,32 @@ def notes(limit: int = 500):
                 continue
     out.sort(key=lambda x: x.get("ts", ""), reverse=True)
     return out[:limit]
+
+
+# ---------- 私信台账 ----------
+DM = DATA / "dm.json"
+
+
+def dm_all() -> dict:
+    return _read_json(DM, {})
+
+
+def is_dmd(uid: str) -> bool:
+    return uid in dm_all()
+
+
+def mark_dm(uid: str, name: str = "", text: str = ""):
+    with _LCK:
+        d = _read_json(DM, {})
+        d[uid] = {"t": time.strftime("%Y-%m-%d %H:%M:%S"), "name": name[:30], "text": text[:120]}
+        _write_json(DM, d)
+
+
+def dm_today() -> int:
+    d = _read_json(DM, {})
+    day = time.strftime("%Y-%m-%d")
+    return sum(1 for v in d.values() if str(v.get("t", ""))[:10] == day)
+
+
+def dm_total() -> int:
+    return len(_read_json(DM, {}))

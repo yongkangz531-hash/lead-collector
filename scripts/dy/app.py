@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""线索采集台 · 本地服务（采集 + 定时监控 + 台账 + 风控）
+"""抖音采集台 · 本地服务（采集 + 定时监控 + 台账 + 风控）
 
   python app.py    → http://127.0.0.1:8789
 
@@ -12,6 +12,7 @@ import os
 import csv
 import io
 import json
+import re
 import threading
 import time
 import traceback
@@ -24,6 +25,7 @@ import dy_collect as collect2
 import bb
 import comment as comment_mod
 import control
+import dm as dm_mod
 import follow
 import guard
 import store
@@ -34,12 +36,19 @@ CONF = HERE / "data" / "config.json"
 PORT = int(os.environ.get("DY_PORT") or 8789)
 
 DEFAULT_CONF = {
-    "jobs": [{"kw": "装修", "notes": 6, "every_min": 60, "enabled": False, "last_run": 0}],
+    "jobs": [{"kw": "装修", "kw2": [], "notes": 6, "every_min": 60, "enabled": False, "last_run": 0}],
     "filters": ["多少钱", "怎么", "求带", "报价", "价格", "在哪", "推荐", "新手", "货源", "想学"],
     "use_filter": False,
     "collect": {"min_likes": 0, "min_comments": 0, "include": [], "exclude": [],
                 "city": "", "only_uid": True, "monitor_min": 30,
+                "kw2": [], "date_from": "", "date_to": "",
+                "target": 120, "expand": 1,
                 "comment_gap": 45, "follow_gap": 6, "realtime_follow": False},
+    "dm": {"messages": [
+        "看到你在这条视频下面的评论，我这边正好有一份整理好的资料，需要的话我发你",
+        "你说的这个情况我遇到过，能少走不少弯路，要不要我把那份清单发你",
+        "这个问题我整理过一份对比，直接发你看？",
+    ], "gap": 60, "daily_cap": 20},
     "replies": [
         "我之前也纠结过这个，后来找人算了一版，比想的便宜",
         "这个我整理过一份对比，需要的话跟我说",
@@ -60,6 +69,34 @@ CSTATE = {"running": False, "log": [], "ok": 0, "skipped": 0, "failed": 0, "done
 CLOCK = threading.Lock()
 COMMENT_DAILY_CAP = 15
 
+DSTATE = {"running": False, "log": [], "ok": 0, "skipped": 0, "failed": 0, "done": 0, "total": 0}
+DLOCK = threading.Lock()
+
+
+def dlog(msg):
+    with DLOCK:
+        DSTATE["log"].append(msg)
+        DSTATE["log"][:] = DSTATE["log"][-120:]
+    print(msg, flush=True)
+
+
+def dm_worker(targets, messages, gap, daily_cap):
+    control.reset()
+    with DLOCK:
+        DSTATE.update({"running": True, "log": [], "ok": 0, "skipped": 0, "failed": 0,
+                       "done": 0, "total": len(targets)})
+    try:
+        res = asyncio.run(dm_mod.run(targets, messages, log=dlog,
+                                     gap=(max(20, gap - 15), gap + 35), daily_cap=daily_cap))
+        with DLOCK:
+            DSTATE.update({k: res.get(k, DSTATE[k]) for k in ("ok", "skipped", "failed", "done", "total")})
+            DSTATE["running"] = False
+    except Exception as e:
+        with DLOCK:
+            DSTATE["running"] = False
+            DSTATE["log"].append("出错：" + str(e)[:120])
+        traceback.print_exc()
+
 
 def clog(msg):
     with CLOCK:
@@ -74,7 +111,8 @@ def comment_worker(targets, phrases):
         CSTATE.update({"running": True, "log": [], "ok": 0, "skipped": 0, "failed": 0,
                        "done": 0, "total": len(targets)})
     try:
-        res = asyncio.run(comment_mod.run(targets, phrases, log=clog))
+        res = asyncio.run(comment_mod.run(targets, phrases, log=clog,
+                                          daily_cap=COMMENT_DAILY_CAP))
         with CLOCK:
             CSTATE.update(res)
             CSTATE["running"] = False
@@ -124,11 +162,13 @@ def account_worker():
         print("读账号失败：" + str(e)[:120], flush=True)
 
 
-def apply_filters(rows, conf, note_likes=None):
+def apply_filters(rows, conf):
+    """按参数过滤：包含词 / 屏蔽词 / 地区 / 视频点赞下限 / 视频评论下限"""
     c = (conf.get("collect") or {})
     inc = [x for x in (c.get("include") or []) if x]
     exc = [x for x in (c.get("exclude") or []) if x]
     city = (c.get("city") or "").strip()
+    min_likes = int(c.get("min_likes") or 0)
     min_c = int(c.get("min_comments") or 0)
     out = []
     for r in rows:
@@ -139,9 +179,10 @@ def apply_filters(rows, conf, note_likes=None):
             continue
         if city and city not in (r.get("ip") or ""):
             continue
-        if min_c and note_likes is not None:
-            if int(note_likes.get(r.get("note_id"), 0) or 0) < 0:
-                continue
+        if min_likes and collect2._num(r.get("vlikes")) < min_likes:
+            continue
+        if min_c and collect2._num(r.get("vcomments")) < min_c:
+            continue
         out.append(r)
     return out
 
@@ -153,16 +194,22 @@ async def _open_in_browser(url):
         await cdp.call("Page.navigate", sid, url=url)
 
 
-def note_worker(url):
+def note_worker(url, target=None, expand=None):
     t0 = time.time()
     control.reset()
+    conf = load_conf()
+    c = conf.get("collect") or {}
+    target = int(target or c.get("target") or collect2.DEFAULT_TARGET)
+    if expand is None:
+        expand = c.get("expand")
+    expand = int(expand if expand is not None else 1)
     with LOCK:
-        STATE.update({"running": True, "kw": "单篇", "job": "单篇", "step": "打开笔记",
+        STATE.update({"running": True, "kw": "单篇", "job": "单篇", "step": "打开视频",
                       "error": "", "log": [], "started": t0, "notes_done": 0,
                       "notes_total": 1, "new_leads": 0, "paused": False})
     try:
         guard.begin(1, force=True)
-        rows, meta = asyncio.run(collect2.run_note(url, log=log))
+        rows, meta = asyncio.run(collect2.run_note(url, log=log, target=target, expand=expand))
         conf = load_conf()
         rows = apply_filters(rows, conf)
         scored = score_rows(rows)
@@ -185,6 +232,69 @@ def note_worker(url):
             STATE["step"] = "出错"
             STATE["error"] = f"{type(e).__name__}: {e}"
         log("出错：" + str(e)[:160])
+    finally:
+        with LOCK:
+            STATE["running"] = False
+            STATE["elapsed"] = int(time.time() - t0)
+
+
+def ctime_days(s):
+    """抖音评论时间多为相对时间：刚刚 / 3分钟前 / 2小时前 / 5天前 / 3月前 / 1年前。
+    返回大约多少天前（未知返回 99999），用于「最近 N 天」筛选。"""
+    s = (s or "").strip()
+    if not s:
+        return 99999
+    if "刚刚" in s or "秒前" in s or "分钟前" in s or "小时前" in s:
+        return 0
+    m = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", s)
+    if m:
+        try:
+            d = time.mktime(time.strptime(f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}", "%Y-%m-%d"))
+            return max(0, int((time.time() - d) / 86400))
+        except Exception:
+            return 99999
+    n = re.search(r"(\d+)", s)
+    v = int(n.group(1)) if n else 1
+    if "天前" in s:
+        return v
+    if "周前" in s:
+        return v * 7
+    if "月前" in s:
+        return v * 30
+    if "年前" in s:
+        return v * 365
+    return 99999
+
+
+def ctime_min(s):
+    """相对时间折算成分量（分钟），用于排序；未知给一个很大的数"""
+    s = (s or "").strip()
+    if not s:
+        return 10 ** 9
+    if "刚刚" in s or "秒前" in s:
+        return 0
+    m = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", s)
+    if m:
+        try:
+            d = time.mktime(time.strptime(f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}", "%Y-%m-%d"))
+            return int((time.time() - d) / 60)
+        except Exception:
+            return 10 ** 9
+    n = re.search(r"(\d+)", s)
+    v = int(n.group(1)) if n else 1
+    if "分钟前" in s:
+        return v
+    if "小时前" in s:
+        return v * 60
+    if "天前" in s:
+        return v * 1440
+    if "周前" in s:
+        return v * 7 * 1440
+    if "月前" in s:
+        return v * 30 * 1440
+    if "年前" in s:
+        return v * 365 * 1440
+    return 10 ** 9
 
 
 def load_conf():
@@ -241,9 +351,18 @@ def log(msg):
     print(msg, flush=True)
 
 
-def worker(kw, notes, job="手动", force=False):
+def worker(kw, notes, job="手动", force=False, kw2_list=None, date_from="", date_to="",
+           target=None, expand=None):
     t0 = time.time()
     conf = load_conf()
+    c = conf.get("collect") or {}
+    kw2_list = [x.strip() for x in (kw2_list if kw2_list is not None else (c.get("kw2") or [])) if str(x).strip()]
+    date_from = (date_from if date_from is not None else c.get("date_from") or "").strip()
+    date_to = (date_to if date_to is not None else c.get("date_to") or "").strip()
+    target = int(target or c.get("target") or collect2.DEFAULT_TARGET)
+    if expand is None:
+        expand = c.get("expand")
+    expand = int(expand if expand is not None else 1)
     control.reset()
     with LOCK:
         STATE.update({"running": True, "kw": kw, "job": job, "step": "搜索", "error": "",
@@ -251,8 +370,37 @@ def worker(kw, notes, job="手动", force=False):
                       "new_leads": 0, "paused": False})
     try:
         allow = guard.begin(notes, force=force)
-        log(f"风控允许本轮最多 {allow} 篇")
-        rows, _notes_meta = asyncio.run(collect2.run(kw, allow, log=log, skip=store.note_seen))
+        log(f"风控允许本轮最多 {allow} 篇 · 每条视频目标 {target} 条评论"
+            + (f" · 发布时间 {date_from or '不限'} ~ {date_to or '不限'}" if (date_from or date_to) else ""))
+
+        combos = [""] + kw2_list if kw2_list else [""]
+        if kw2_list:
+            log("二级搜索词：" + "、".join(kw2_list) + f"（共 {len(combos)} 组搜索）")
+        per = max(1, allow // len(combos)) if len(combos) > 1 else allow
+        all_rows, all_meta = [], []
+        for i, k2 in enumerate(combos):
+            if control.is_stopped():
+                break
+            quota = allow if len(combos) == 1 else (per if i < len(combos) - 1 else max(1, allow - per * i))
+            if quota <= 0:
+                break
+            with LOCK:
+                STATE["step"] = f"搜索 {kw + ' ' + k2}".strip()
+            try:
+                rows, meta = asyncio.run(collect2.run(
+                    kw, quota, log=log, skip=store.note_seen, kw2=k2,
+                    date_from=date_from, date_to=date_to, target=target, expand=expand,
+                    min_likes=int(c.get("min_likes") or 0), min_comments=int(c.get("min_comments") or 0)))
+            except Exception as e:
+                if len(combos) == 1:
+                    raise
+                log(f"二级词「{k2}」这轮出错，跳过：{str(e)[:80]}")
+                continue
+            all_rows.extend(rows)
+            all_meta.extend(meta)
+            with LOCK:
+                STATE["notes_done"] = len(all_meta)
+        rows, notes_meta = all_rows, all_meta
 
         rows = apply_filters(rows, conf)
         filters = [f for f in conf.get("filters", []) if f]
@@ -274,7 +422,7 @@ def worker(kw, notes, job="手动", force=False):
             STATE["step"] = "完成"
             STATE["new_leads"] = new
         store.add_run({"t": time.strftime("%Y-%m-%d %H:%M:%S"), "job": job, "kw": kw,
-                       "notes": allow, "rows": len(scored), "new": new,
+                       "notes": len(notes_meta), "rows": len(scored), "new": new,
                        "hi": st["hi"], "sec": int(time.time() - t0), "ok": True})
         log(f"新增 {new} 条线索（本轮 {len(scored)} 条，高意向 {st['hi']}）")
     except Exception as e:
@@ -313,6 +461,7 @@ def scheduler():
                 log(f"定时任务启动：{job['kw']}")
                 threading.Thread(target=worker,
                                  args=(job["kw"], int(job.get("notes", 6)), job["kw"]),
+                                 kwargs={"kw2_list": job.get("kw2") or None},
                                  daemon=True).start()
                 break
         except Exception as e:
@@ -365,6 +514,31 @@ class H(BaseHTTPRequestHandler):
             rows = store.all_leads(q.get("kw") or None, limit=int(q.get("limit", 800)))
             if q.get("intent"):
                 rows = [r for r in rows if r.get("intent") == q["intent"]]
+            if q.get("kw2"):
+                rows = [r for r in rows if r.get("kw2") == q["kw2"]]
+            # 时间筛选：field=ts(采集时间) / ctime(评论时间，按相对时间折算天数)
+            field = q.get("field") or "ts"
+            t_from = (q.get("from") or "").strip()
+            t_to = (q.get("to") or "").strip()
+            days = int(q.get("days") or 0)
+            order = q.get("order") or "desc"
+            if field == "ctime":
+                if days:
+                    rows = [r for r in rows if ctime_days(r.get("ctime")) <= days]
+                rows.sort(key=lambda r: ctime_min(r.get("ctime")), reverse=(order == "asc"))
+            else:
+                if days:
+                    cut = time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
+                    rows = [r for r in rows if str(r.get("ts", ""))[:10] >= cut]
+                if t_from:
+                    rows = [r for r in rows if str(r.get("ts", ""))[:10] >= t_from]
+                if t_to:
+                    rows = [r for r in rows if str(r.get("ts", ""))[:10] <= t_to]
+                if order == "asc":
+                    rows = list(reversed(rows))     # store.all_leads 返回的是倒序（最新在前）
+            if q.get("q"):
+                needle = q["q"].strip()
+                rows = [r for r in rows if needle in (r.get("text") or "") or needle in (r.get("name") or "")]
             fu = []
             for url in (r.get("user_url") or "" for r in rows):
                 if "/user/profile/" in url:          # 小红书
@@ -373,8 +547,10 @@ class H(BaseHTTPRequestHandler):
                     fu.append(url.split("/user/")[1].split("?")[0].strip("/"))
             fl = store.followed()
             cm = store.commented()
+            dmd = store.dm_all()
             return self._json({"rows": rows, "stats": stats(rows),
                                "followed": [u for u in set(fu) if u in fl],
+                               "dmed": [u for u in set(fu) if u in dmd],
                                "commented": [k for k in (r.get("key") for r in rows) if k in cm]})
 
         if p == "/api/login":
@@ -397,7 +573,7 @@ class H(BaseHTTPRequestHandler):
                             r.get("need", ""), r.get("reply", "")])
             data = ("\ufeff" + buf.getvalue()).encode("utf-8")
             return self._send(200, data, "text/csv; charset=utf-8",
-                              {"Content-Disposition": 'attachment; filename="xhs_leads.csv"'})
+                              {"Content-Disposition": 'attachment; filename="dy_leads.csv"'})
 
         if p == "/api/config":
             return self._json(load_conf())
@@ -425,24 +601,29 @@ class H(BaseHTTPRequestHandler):
             buf = io.StringIO()
             w = csv.writer(buf)
             if kind == "notes":
-                w.writerow(["序号", "发布时间", "文章标题", "作品链接", "点赞数量", "评论数量", "标签", "采集时间"])
+                w.writerow(["序号", "发布时间", "视频标题", "作者", "视频链接", "点赞", "评论", "收藏", "分享", "标签", "采集时间"])
                 for i, n in enumerate(store.notes(100000), 1):
-                    w.writerow([i, n.get("date", ""), n.get("title", ""), n.get("url", ""),
-                                n.get("likes", ""), n.get("comments", ""), n.get("tags", ""), n.get("ts", "")])
+                    w.writerow([i, n.get("date", ""), n.get("title", ""), n.get("author", ""), n.get("url", ""),
+                                n.get("likes", ""), n.get("comments", ""), n.get("collects", ""),
+                                n.get("shares", ""), n.get("tags", ""), n.get("ts", "")])
             else:
-                w.writerow(["序号", "昵称", "抖音号", "uid", "IP属地", "评论时间", "评论内容",
-                            "意向", "需求点", "话术", "笔记", "关注状态", "评论状态"])
+                w.writerow(["序号", "昵称", "用户uid", "IP属地", "评论时间", "评论内容",
+                            "意向", "需求点", "话术", "视频标题", "视频作者", "二级词",
+                            "关注状态", "评论状态", "已私信"])
                 fw = store.followed()
                 cm = store.commented()
+                dm = store.dm_all()
                 for i, r in enumerate(store.all_leads(limit=100000), 1):
-                    uid = (r.get("user_url") or "").split("/user/profile/")[-1].split("?")[0]
-                    w.writerow([i, r.get("name", ""), "", uid, r.get("ip", ""), r.get("ctime", ""),
+                    uid = (r.get("user_url") or "").split("/user/")[-1].split("?")[0].strip("/")
+                    w.writerow([i, r.get("name", ""), uid, r.get("ip", ""), r.get("ctime", ""),
                                 r.get("text", ""), r.get("intent", ""), r.get("need", ""),
-                                r.get("reply", ""), r.get("note", ""),
-                                "已关注" if uid in fw else "", "已评论" if r.get("key") in cm else ""])
-            data = ("﻿" + buf.getvalue()).encode("utf-8")
+                                r.get("reply", ""), r.get("note", ""), r.get("author", ""),
+                                r.get("kw2", ""),
+                                "已关注" if uid in fw else "", "已评论" if r.get("key") in cm else "",
+                                "已私信" if uid in dm else ""])
+            data = ("\ufeff" + buf.getvalue()).encode("utf-8")
             return self._send(200, data, "text/csv; charset=utf-8",
-                              {"Content-Disposition": f'attachment; filename="xhs_{kind}.csv"'})
+                              {"Content-Disposition": f'attachment; filename="dy_{kind}.csv"'})
 
         if p == "/api/comment/status":
             with CLOCK:
@@ -461,6 +642,14 @@ class H(BaseHTTPRequestHandler):
             snap["bb"] = {"name": BB.get("name", ""), "busy": BB.get("busy", False),
                           "error": BB.get("error", ""),
                           "connected": bool(collect2.WS_OVERRIDE.get("ws"))}
+            return self._json(snap)
+
+        if p == "/api/dm/status":
+            with DLOCK:
+                snap = dict(DSTATE)
+            snap["today"] = store.dm_today()
+            snap["total"] = store.dm_total()
+            snap["cap"] = (load_conf().get("dm") or {}).get("daily_cap", 20)
             return self._json(snap)
 
         if p == "/api/runs":
@@ -539,7 +728,16 @@ class H(BaseHTTPRequestHandler):
             reason = guard.block_reason(force=bool(body.get("force")), skip_cool=bool(body.get("skip_cool")))
             if reason:
                 return self._json({"error": reason}, 429)
-            threading.Thread(target=worker, args=(kw, notes, "手动", bool(body.get("force"))),
+            kw2 = body.get("kw2")
+            if isinstance(kw2, str):
+                kw2 = [x.strip() for x in re.split(r"[,，\n]", kw2) if x.strip()]
+            threading.Thread(target=worker,
+                             args=(kw, notes, "手动", bool(body.get("force"))),
+                             kwargs={"kw2_list": kw2 if isinstance(kw2, list) else None,
+                                     "date_from": body.get("date_from"),
+                                     "date_to": body.get("date_to"),
+                                     "target": body.get("target"),
+                                     "expand": body.get("expand")},
                              daemon=True).start()
             return self._json({"ok": True})
 
@@ -644,12 +842,55 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/collect_note":
             url = (body.get("url") or "").strip()
             if "/video/" not in url:
-                return self._json({"error": "作品地址不对，应该是 https://www.xiaohongshu.com/explore/..."}, 400)
+                return self._json({"error": "作品地址不对，应该是 https://www.douyin.com/video/..."}, 400)
             with LOCK:
                 if STATE["running"]:
                     return self._json({"error": "正在跑别的任务"}, 409)
-            threading.Thread(target=note_worker, args=(url,), daemon=True).start()
+            threading.Thread(target=note_worker, args=(url,),
+                             kwargs={"target": body.get("target"), "expand": body.get("expand")},
+                             daemon=True).start()
             return self._json({"ok": True})
+
+        if p == "/api/dm":
+            keys = body.get("keys") or []
+            if body.get("high_intent"):
+                keys = [r.get("key") for r in store.all_leads(limit=100000)
+                        if r.get("intent") == "高" and r.get("user_url")]
+            if not keys:
+                return self._json({"error": "没有可私信的对象（先勾选，或采到高意向线索）"}, 400)
+            with DLOCK:
+                if DSTATE["running"]:
+                    return self._json({"error": "上一批私信还在发"}, 409)
+            conf = load_conf()
+            dmc = conf.get("dm") or {}
+            cap = int(dmc.get("daily_cap") or 20)
+            if store.dm_today() >= cap:
+                return self._json({"error": f"今天已私信 {store.dm_today()} 条，到日上限 {cap} 了"}, 429)
+            msgs = [m for m in (dmc.get("messages") or []) if str(m).strip()]
+            if not msgs:
+                return self._json({"error": "先在「私信内容」里写几句要发的话"}, 400)
+            by_key = {r.get("key"): r for r in store.all_leads(limit=100000)}
+            targets, seen_uid = [], set()
+            for k in keys:
+                r = by_key.get(k)
+                if not r:
+                    continue
+                url = r.get("user_url") or ""
+                uid = url.split("/user/")[-1].split("?")[0].strip("/") if "/user/" in url else ""
+                if not uid or uid in seen_uid:
+                    continue
+                seen_uid.add(uid)
+                targets.append({"uid": uid, "name": r.get("name", ""),
+                                "text": r.get("text", ""), "reply": r.get("reply", "")})
+            if not targets:
+                return self._json({"error": "勾选的这些没有主页链接，先重新采集一批"}, 400)
+            # 个性化：把对方原评论和话术接上，避免全是同一句话
+            for t in targets:
+                t["msg"] = ""
+            threading.Thread(target=dm_worker,
+                             args=(targets, msgs, int(dmc.get("gap") or 60), cap),
+                             daemon=True).start()
+            return self._json({"ok": True, "count": len(targets)})
 
         if p == "/api/comment":
             keys = body.get("keys") or []
@@ -701,6 +942,10 @@ class H(BaseHTTPRequestHandler):
                 cur = conf.get("collect") or {}
                 cur.update(body["collect"] or {})
                 conf["collect"] = cur
+            if "dm" in body:
+                cur = conf.get("dm") or {}
+                cur.update(body["dm"] or {})
+                conf["dm"] = cur
             if "replies" in body:
                 conf["replies"] = [str(x).strip() for x in body["replies"] if str(x).strip()]
             if "filters" in body:
@@ -716,7 +961,26 @@ class H(BaseHTTPRequestHandler):
         pass
 
 
+class Server(ThreadingHTTPServer):
+    # Windows 上 allow_reuse_address=True 会让同一个端口被绑定多次，
+    # 出现「新旧两个服务同时在线、请求随机落到其中一个」的怪问题（状态在采集中/待命之间乱跳）。
+    allow_reuse_address = False
+    daemon_threads = True
+
+
+def _port_busy():
+    import urllib.request as _ur
+    try:
+        with _ur.urlopen(f"http://127.0.0.1:{PORT}/api/status", timeout=1.5) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
 if __name__ == "__main__":
+    if _port_busy():
+        print(f"已有采集服务在 {PORT} 端口运行，本进程退出（避免两个服务抢同一个端口）", flush=True)
+        raise SystemExit(0)
     threading.Thread(target=scheduler, daemon=True).start()
-    print(f"线索采集台已启动 → http://127.0.0.1:{PORT}")
-    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    print(f"抖音采集台已启动 → http://127.0.0.1:{PORT}")
+    Server(("127.0.0.1", PORT), H).serve_forever()

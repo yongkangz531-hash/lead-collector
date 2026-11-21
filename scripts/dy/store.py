@@ -152,6 +152,35 @@ def notes_this_hour() -> int:
     return n
 
 
+# ---------- 私信台账 ----------
+DM = DATA / "dm.json"
+
+
+def dm_all() -> dict:
+    return _read_json(DM, {})
+
+
+def is_dmd(uid: str) -> bool:
+    return uid in dm_all()
+
+
+def mark_dm(uid: str, name: str = "", text: str = ""):
+    with _LCK:
+        d = _read_json(DM, {})
+        d[uid] = {"t": time.strftime("%Y-%m-%d %H:%M:%S"), "name": name[:30], "text": text[:120]}
+        _write_json(DM, d)
+
+
+def dm_today() -> int:
+    d = _read_json(DM, {})
+    day = time.strftime("%Y-%m-%d")
+    return sum(1 for v in d.values() if str(v.get("t", ""))[:10] == day)
+
+
+def dm_total() -> int:
+    return len(_read_json(DM, {}))
+
+
 # ---------- 关注台账 ----------
 FOLLOWED = DATA / "followed.json"
 ACCOUNT = DATA / "account.json"

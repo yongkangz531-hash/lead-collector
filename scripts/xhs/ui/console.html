@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<title>线索采集台</title>
+<title>小红书采集台</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 :root{--bg:#04060c;--panel:#0a1220;--line:rgba(90,160,255,.16);--line2:rgba(90,160,255,.38);
@@ -65,7 +65,10 @@ tbody tr:hover td{background:rgba(34,211,238,.05)}
 <body>
 <div class="wrap">
   <div class="tbar">
-    <div class="logo">线</div><span class="bname">线索采集台</span>
+    <div class="logo">红</div><span class="bname">小红书采集台</span>
+    <span id="modes">
+      <button data-m="split">分屏</button><button data-m="ui">只看界面</button><button data-m="xhs">只看浏览器</button>
+    </span>
     <span class="t" id="acc" style="margin-left:8px"></span>
     <div class="sp">
       <span id="stat">待命</span><span id="hour" class="t"></span><span id="clk" class="t">--:--</span>
@@ -102,6 +105,8 @@ tbody tr:hover td{background:rgba(34,211,238,.05)}
     <div class="row" style="gap:6px 8px">
       <span class="lab">关键词</span>
       <input id="kw" value="装修" style="width:110px">
+      <span class="lab">二级词</span>
+      <input id="kw2" placeholder="一行或逗号分隔，例：报价,加盟" style="width:170px">
       <span class="lab">篇数</span>
       <select id="notes"><option>3</option><option selected>6</option><option>10</option><option>15</option></select>
       <button id="start">开始采集</button>
@@ -127,6 +132,25 @@ tbody tr:hover td{background:rgba(34,211,238,.05)}
       <span class="err" id="err"></span>
     </div>
 
+    <!-- 线索筛选 -->
+    <div class="row" style="gap:6px 8px">
+      <span class="lab">筛选</span>
+      <select id="fld" style="width:88px">
+        <option value="">采集时间</option><option value="ctime">评论时间</option>
+      </select>
+      <input id="dfrom" type="date" style="width:118px"><span class="lab">到</span>
+      <input id="dto" type="date" style="width:118px">
+      <span class="lab">最近</span>
+      <select id="days" style="width:76px"><option value="0">不限</option><option value="1">1 天</option><option value="3">3 天</option><option value="7">7 天</option><option value="30">30 天</option></select>
+      <span class="lab">排序</span>
+      <select id="ord" style="width:96px"><option value="desc">最新在前</option><option value="asc">最早在前</option></select>
+      <input id="qtext" placeholder="搜昵称/评论内容" style="width:130px">
+      <select id="fltkw2" style="width:112px"><option value="">全部二级词</option></select>
+      <button class="g" id="applyflt">应用筛选</button>
+      <button class="g" id="clearflt">清筛选</button>
+      <span class="t" id="fstat"></span>
+    </div>
+
     <!-- 用户信息表 -->
     <div class="tbl">
       <table>
@@ -134,7 +158,7 @@ tbody tr:hover td{background:rgba(34,211,238,.05)}
           <th style="width:34px"><input type="checkbox" id="cku"></th>
           <th style="width:38px">序号</th><th style="width:96px">昵称</th><th style="width:86px">uid</th><th style="width:50px">IP</th><th style="width:56px">时间</th>
           <th>评论内容</th><th style="width:40px">意向</th><th style="width:62px">状态</th>
-          <th style="width:50px">关注</th><th style="width:50px">评论</th>
+          <th style="width:50px">关注</th><th style="width:50px">评论</th><th style="width:62px">私信</th>
         </tr></thead>
         <tbody id="tu"></tbody>
       </table>
@@ -152,6 +176,21 @@ tbody tr:hover td{background:rgba(34,211,238,.05)}
       <span class="t" id="cnt"></span>
     </div>
 
+    <!-- 私信 -->
+    <div class="row" style="gap:6px 8px">
+      <button class="g" id="editdm">私信内容</button>
+      <span class="lab">间隔</span><input id="dmgap" type="number" min="20" max="600" style="width:56px"><span class="lab">秒</span>
+      <span class="lab">每天最多</span><input id="dmcap" type="number" min="1" max="200" style="width:56px"><span class="lab">条</span>
+      <button id="dmall">一键私信（勾选的人）</button>
+      <span class="t" id="dmstat"></span>
+    </div>
+
+    <div id="dmpanel" style="display:none">
+      <div class="row" style="margin-bottom:4px"><span class="lab">私信词库（一行一条，发送时随机挑一条）</span>
+        <button class="mini" id="savedm">保存</button><span class="t" id="dmcount"></span></div>
+      <textarea id="dmtxt" rows="4" style="width:100%"></textarea>
+    </div>
+
     <div id="repanel" style="display:none">
       <div class="row" style="margin-bottom:4px"><span class="lab">评论词库（一行一条）</span>
         <button class="mini" id="saverep">保存</button><span class="t" id="rcount"></span></div>
@@ -165,7 +204,8 @@ tbody tr:hover td{background:rgba(34,211,238,.05)}
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-let S = {}, conf = {}, notes = [], leads = [], followed = new Set(), commented = new Set();
+let S = {}, conf = {}, notes = [], leads = [], followed = new Set(), commented = new Set(), dmed = new Set();
+let selKeys = new Set(), lastSig = "";
 const uidOf = u => { const m = String(u||"").match(/\/user\/profile\/([0-9a-f]{8,})/); return m?m[1]:""; };
 
 async function jget(u){ const r = await fetch(u); return r.json(); }
@@ -201,9 +241,9 @@ function paintNotes(){
 function paintUsers(){
   const list = leads;
   $("#tu").innerHTML = list.length ? list.slice(0,600).map((r,i)=>{
-    const uid = uidOf(r.user_url), f = followed.has(uid), c = commented.has(r.key);
+    const uid = uidOf(r.user_url), f = followed.has(uid), c = commented.has(r.key), d = dmed.has(uid);
     return `<tr>
-    <td><input type="checkbox" class="cku" data-k="${r.key}" data-uid="${uid}" data-name="${esc(r.name)}"></td>
+    <td><input type="checkbox" class="cku" data-k="${r.key}" data-uid="${uid}" data-name="${esc(r.name)}"${selKeys.has(r.key)?" checked":""}></td>
     <td class="t">${i+1}</td>
     <td title="${esc(r.name)}">${esc(r.name)}</td>
     <td class="t" title="${uid}">${esc(uid?uid.slice(0,10):"—")}</td>
@@ -214,19 +254,56 @@ function paintUsers(){
     <td>${f?'<span class="tag ok">已关注</span>':''}${c?'<span class="tag warn" style="margin-left:3px">已评论</span>':''}${(!f&&!c)?'<span class="t">新</span>':''}</td>
     <td>${(!f&&r.user_url)?'<button class="mini g f1" data-k="'+r.key+'">关注</button>':'<span class="t">—</span>'}</td>
     <td>${(!c&&r.note_url)?'<button class="mini g c1" data-k="'+r.key+'">评论</button>':'<span class="t">—</span>'}</td>
+    <td>${d?'<span class="tag ok">已私信</span>':(r.user_url?'<button class="mini g d1" data-k="'+r.key+'">私信</button>':'<span class="t">无主页</span>')}</td>
     </tr>`;}).join("")
-    : '<tr><td colspan="12" class="empty">还没有用户，采集完就有了</td></tr>';
+    : '<tr><td colspan="13" class="empty">还没有用户，采集完就有了</td></tr>';
 }
 
 async function refresh(){
   S = await jget("/api/status");
   paintStatus();
-  if(!S.running && S.step==="完成"){ loadAll(); }
+  // 只有数据真的变了才重绘表格，否则 1.5 秒一次重绘会把用户的勾选清掉
+  const sig = (S.total_leads||0) + "|" + (S.notes_seen||0) + "|" + (S.step||"");
+  if (sig !== lastSig) {
+    lastSig = sig;
+    loadAll();
+  }
+}
+function filterQS(){
+  const p = new URLSearchParams();
+  const fld = $("#fld") ? $("#fld").value : "";
+  const days = $("#days") ? $("#days").value : "0";
+  const ord = $("#ord") ? $("#ord").value : "desc";
+  if (fld) p.set("field", fld);
+  if (days && days !== "0") p.set("days", days);
+  if (ord) p.set("order", ord);
+  const df = $("#dfrom") ? $("#dfrom").value : "";
+  const dt = $("#dto") ? $("#dto").value : "";
+  if (df) p.set("dfrom", df);
+  if (dt) p.set("dto", dt);
+  const q = $("#qtext") ? $("#qtext").value.trim() : "";
+  if (q) p.set("q", q);
+  const k2 = $("#fltkw2") ? $("#fltkw2").value : "";
+  if (k2) p.set("kw2", k2);
+  return p.toString();
 }
 async function loadAll(){
-  const [n, l] = await Promise.all([jget("/api/notes?limit=300"), jget("/api/leads?limit=800")]);
+  const qs = filterQS();
+  const [n, l] = await Promise.all([
+    jget("/api/notes?limit=300"),
+    jget("/api/leads?limit=800" + (qs ? "&" + qs : ""))]);
   notes = n.rows||[]; leads = l.rows||[];
-  followed = new Set(l.followed||[]); commented = new Set(l.commented||[]);
+  followed = new Set(l.followed||[]); commented = new Set(l.commented||[]); dmed = new Set(l.dmed||[]);
+  const alive = new Set(leads.map(r=>r.key));
+  [...selKeys].forEach(k=>{ if(!alive.has(k)) selKeys.delete(k); });
+  const ks = [...new Set(leads.map(r=>r.kw2).filter(Boolean))];
+  const sel = $("#fltkw2");
+  if (sel) {
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">全部二级词</option>' + ks.map(k=>'<option>'+esc(k)+'</option>').join("");
+    if (cur && ks.includes(cur)) sel.value = cur;
+  }
+  if ($("#fstat")) $("#fstat").textContent = "筛出 " + leads.length + " 条";
   paintNotes(); paintUsers();
 }
 async function loadConf(){
@@ -244,15 +321,17 @@ async function loadConf(){
   $("#rtf").checked = !!c.realtime_follow;
   $("#replies").value = (conf.replies||[]).map((x,i)=>(i+1)+". "+x).join(String.fromCharCode(10));
   $("#rcount").textContent = "当前 "+(conf.replies||[]).length+" 条";
+  await loadDmConf();
   const a = await jget("/api/account");
   const acc = a.account||{};
   $("#acc").textContent = acc.nickname ? ("账号 "+acc.nickname+" · 已关注 "+(a.followed||0)+" 人") : "未绑定账号";
 }
 
 // ---------- 交互 ----------
+const kw2List = () => ($("#kw2") ? $("#kw2").value.split(/[,\n、;；]+/).map(x=>x.trim()).filter(Boolean) : []);
 $("#start").onclick = async ()=>{
   const kw = $("#kw").value.trim(); if(!kw) return alert("填个关键词");
-  const d = await jpost("/api/collect",{kw, notes:+$("#notes").value, force:true});
+  const d = await jpost("/api/collect",{kw, kw2:kw2List(), notes:+$("#notes").value, force:true});
   if(d.error) $("#err").textContent = d.error; else { $("#err").textContent=""; }
   loadConf();
 };
@@ -263,7 +342,7 @@ $("#skipcool").onclick = async () => {
     "冷却存在的意义是降低被平台判定为自动化的概率，连跑容易弹验证。" + String.fromCharCode(10) +
     "这次按你的判断来，风险自负。";
   if (!confirm(msg)) return;
-  const d = await jpost("/api/collect", { kw: kw, notes: +$("#notes").value, force: true, skip_cool: true });
+  const d = await jpost("/api/collect", { kw: kw, kw2: kw2List(), notes: +$("#notes").value, force: true, skip_cool: true });
   if (d.error) return alert(d.error);
   refresh();
 };
@@ -290,7 +369,17 @@ $("#clearall").onclick = async () => {
   alert("已清空 " + d.removed + " 条线索");
 };
 $("#ckn").onclick = e => document.querySelectorAll("#tn .ckn").forEach(c=>c.checked=e.target.checked);
-$("#cku").onclick = e => document.querySelectorAll("#tu .cku").forEach(c=>c.checked=e.target.checked);
+$("#cku").onclick = e => {
+  document.querySelectorAll("#tu .cku").forEach(c=>{
+    c.checked = e.target.checked;
+    if (e.target.checked) selKeys.add(c.dataset.k); else selKeys.delete(c.dataset.k);
+  });
+};
+document.addEventListener("change", e => {
+  const c = e.target;
+  if (!c.classList || !c.classList.contains("cku")) return;
+  if (c.checked) selKeys.add(c.dataset.k); else selKeys.delete(c.dataset.k);
+});
 
 $("#monon").onclick = async ()=>{
   const m = Math.max(15, +$("#monmin").value||30);
@@ -358,6 +447,87 @@ async function pollComment(){
 setInterval(()=>{ $("#clk").textContent = new Date().toLocaleTimeString("zh-CN",{hour12:false}); }, 1000);
 setInterval(refresh, 1500);
 loadConf().then(loadAll);
+
+// ---------- 筛选 ----------
+if ($("#applyflt")) $("#applyflt").onclick = () => loadAll();
+if ($("#clearflt")) $("#clearflt").onclick = () => {
+  if ($("#fld")) $("#fld").value = "";
+  if ($("#days")) $("#days").value = "0";
+  if ($("#ord")) $("#ord").value = "desc";
+  if ($("#dfrom")) $("#dfrom").value = "";
+  if ($("#dto")) $("#dto").value = "";
+  if ($("#qtext")) $("#qtext").value = "";
+  if ($("#fltkw2")) $("#fltkw2").value = "";
+  loadAll();
+};
+if ($("#qtext")) $("#qtext").addEventListener("keydown", e => { if (e.key === "Enter") loadAll(); });
+
+// ---------- 私信 ----------
+async function loadDmConf(){
+  const c = (conf.dm || {});
+  if ($("#dmgap")) $("#dmgap").value = c.gap || 60;
+  if ($("#dmcap")) $("#dmcap").value = c.daily_cap || 20;
+  if ($("#dmtxt")) $("#dmtxt").value = (c.messages || []).join(String.fromCharCode(10));
+  if ($("#dmcount")) $("#dmcount").textContent = "当前 " + (c.messages || []).length + " 条";
+  pollDm();
+}
+if ($("#editdm")) $("#editdm").onclick = () => {
+  const box = $("#dmpanel");
+  box.style.display = box.style.display === "none" ? "block" : "none";
+};
+if ($("#savedm")) $("#savedm").onclick = async () => {
+  const lines = $("#dmtxt").value.split(String.fromCharCode(10)).map(s=>s.trim()).filter(Boolean);
+  const dm = { messages: lines, gap: +$("#dmgap").value || 60, daily_cap: +$("#dmcap").value || 20 };
+  await jpost("/api/config", { dm });
+  conf.dm = Object.assign(conf.dm || {}, dm);
+  $("#dmcount").textContent = "当前 " + lines.length + " 条";
+};
+if ($("#dmall")) $("#dmall").onclick = async () => {
+  const keys = [...document.querySelectorAll("#tu .cku:checked")].map(c=>c.dataset.k);
+  if (!keys.length) return alert("先在列表里勾选要私信的人");
+  const msg = "给勾选的 " + keys.length + " 人发私信？" + String.fromCharCode(10) +
+    "· 私信是写操作，发出去收不回，小红书对批量私信有风控" +
+    String.fromCharCode(10) + "· 每人只发一次，发过的不再重复";
+  if (!confirm(msg)) return;
+  const d = await jpost("/api/dm", { keys });
+  if (d.error) return alert(d.error);
+  pollDm();
+};
+async function pollDm(){
+  try {
+    const d = await jget("/api/dm/status");
+    if (d.log && d.log.length) $("#log").textContent = d.log.join(String.fromCharCode(10));
+    if ($("#dmstat")) {
+      $("#dmstat").textContent = d.running
+        ? ("私信中 " + (d.done||0) + "/" + (d.total||0) + " · 成功 " + (d.ok||0) + " 失败 " + (d.failed||0))
+        : ("今天已私信 " + (d.today||0) + "/" + (d.cap||20) + " 条 · 累计 " + (d.total||0));
+    }
+    if (d.running) setTimeout(pollDm, 1500);
+    else loadAll();
+  } catch(e) {}
+}
+document.addEventListener("click", async e => {
+  const d1 = e.target.closest(".d1");
+  if (d1) {
+    d1.disabled = true; d1.textContent = "…";
+    const d = await jpost("/api/dm", { keys: [d1.dataset.k] });
+    if (d.error) { d1.textContent = "失败"; d1.title = d.error; setTimeout(()=>{d1.textContent="私信";d1.disabled=false;},1800); }
+    else pollDm();
+    return;
+  }
+});
+
+// ---------- 分屏切换（只在采集台壳里出现） ----------
+(function(){
+  const box = document.getElementById("modes");
+  const shell = window.xhsShell;
+  if (!box || !shell) return;
+  box.style.display = "flex";
+  const paint = m => box.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.m === m));
+  box.querySelectorAll("button").forEach(b => b.onclick = () => shell.setMode(b.dataset.m));
+  shell.onMode(paint);
+  shell.getMode();
+})();
 </script>
 </body>
 </html>
